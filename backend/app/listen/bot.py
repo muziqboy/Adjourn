@@ -3,7 +3,9 @@
     panel "Send bot" -> join() -> Recall bot joins the Meet as "Adjourn"
     calendar event  -> autojoin.py schedules the same bot; its first webhook adopts it here
     Recall webhook  -> handle_webhook() -> store.add_line(text, speaker)   (same path as every other source)
-    answer click    -> say(text) -> the bot speaks it in the call
+    answer ready    -> raise_hand(question): the bot's tile shows "I have an answer" + a chat message
+    answer click    -> say(text) -> the bot speaks it in the call, then lowers its hand
+                       (the click is the panel button, or someone saying "Go ahead, Adjourn")
 
 Bot state for the panel (store.bot): none | joining | waiting_room | in_call | left | error.
 Recall only notifies status changes through a dashboard-level webhook, so we poll the bot
@@ -38,7 +40,7 @@ def in_call(store: Store) -> bool:
 
 
 async def join(store: Store, meeting_url: str) -> dict:
-    store.set_bot("joining", None)
+    store.set_bot("joining", None, meeting_url)
     try:
         bot = await recall.join(meeting_url)
     except Exception:
@@ -56,10 +58,37 @@ async def leave(store: Store) -> None:
     store.set_bot("left")
 
 
+_speech: dict[str, asyncio.Task] = {}  # text -> its MP3 being rendered or ready
+
+
+def prepare_speech(text: str) -> asyncio.Task:
+    """Start rendering `text` to MP3 now. macOS speech takes ~5 s for a 60-word answer, so the
+    answer agent prepares it while the hand is up, and "Go ahead" plays without a pause."""
+    if text not in _speech:
+        _speech[text] = asyncio.create_task(asyncio.to_thread(voice.speak_mp3, text))
+    return _speech[text]
+
+
 async def say(store: Store, text: str) -> None:
     """Speak `text` in the call through the bot (local TTS, then Recall output_audio)."""
-    mp3 = await asyncio.to_thread(voice.speak_mp3, text)
+    mp3 = await prepare_speech(text)
+    _speech.pop(text, None)
     await recall.output_audio(store.bot["bot_id"], mp3)
+    await lower_hand(store)
+
+
+async def raise_hand(store: Store, question: str) -> None:
+    """Tell everyone in the call that Adjourn has an answer: its camera tile switches to the
+    raised-hand card and it posts in the chat. Meet's own raise-hand button is not reachable
+    through Recall, so this is the visible equivalent."""
+    bot_id = store.bot["bot_id"]
+    await recall.output_video(bot_id, recall.card("hand"))  # first: the hand is what people see
+    await recall.send_chat(bot_id, f"\u270b Adjourn has an answer to: {question}\nSay \u201cGo ahead, Adjourn\u201d to hear it, or \u201cNo thanks, Adjourn\u201d.")
+
+
+async def lower_hand(store: Store) -> None:
+    if in_call(store):
+        await recall.output_video(store.bot["bot_id"], recall.card("listening"))
 
 
 def handle_webhook(store: Store, payload: dict) -> None:

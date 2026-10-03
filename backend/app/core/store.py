@@ -122,8 +122,13 @@ class Store:
 
     # meeting bot
 
-    def set_bot(self, state: str, bot_id: str | None = None) -> None:
-        self.bot = {"state": state, "bot_id": bot_id if bot_id is not None else self.bot.get("bot_id")}
+    def set_bot(self, state: str, bot_id: str | None = None, meeting_url: str | None = None) -> None:
+        self.bot = {
+            "state": state,
+            "bot_id": bot_id if bot_id is not None else self.bot.get("bot_id"),
+            # which call the bot is in, so calendar auto-join never sends a second bot there
+            "meeting_url": meeting_url if meeting_url is not None else self.bot.get("meeting_url"),
+        }
         self.emit("bot.state", self.bot)
 
     # tasks

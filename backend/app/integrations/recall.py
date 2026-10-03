@@ -3,6 +3,8 @@ call's captions to us with speaker names, and plays audio into the call.
 
     join(meeting_url)     create the bot; Recall posts transcripts to /api/recall/webhook/
     output_audio(mp3)     the bot plays an MP3 in the call (used by the answer agent's click)
+    output_video(jpeg)    the bot's camera tile shows this image ("listening" / "raised hand")
+    send_chat(text)       a message in the meeting chat, to everyone
     leave()
 
 Calendar V2 (used by listen/autojoin.py): Recall watches the demo account's Google Calendar
@@ -27,8 +29,17 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from pathlib import Path
+
 from ..core.config import settings
 from . import voice
+
+ASSETS = Path(__file__).resolve().parents[1] / "assets"  # camera cards, see scripts/make_bot_cards.py
+
+
+def card(name: str) -> bytes:
+    """A camera card: "listening" or "hand"."""
+    return (ASSETS / f"bot_{name}.jpg").read_bytes()
 
 
 def _host() -> str:
@@ -88,6 +99,11 @@ def bot_config(meeting_url: str | None = None) -> dict:
         },
         # Recall only allows output_audio later if the bot was created with an automatic
         # audio output; a short silent clip satisfies that without saying anything.
+        # The camera tile shows a card; like audio, Recall only allows changing it later
+        # (output_video) if the bot was created with one.
+        "automatic_video_output": {
+            "in_call_recording": {"kind": "jpeg", "b64_data": base64.b64encode(card("listening")).decode()}
+        },
         "automatic_audio_output": {
             "in_call_recording": {"data": {"kind": "mp3", "b64_data": base64.b64encode(voice.silent_mp3()).decode()}}
         },
@@ -105,6 +121,16 @@ async def join(meeting_url: str) -> dict:
 async def output_audio(bot_id: str, mp3: bytes) -> None:
     await asyncio.to_thread(_call, "POST", f"bot/{bot_id}/output_audio/",
                             {"kind": "mp3", "b64_data": base64.b64encode(mp3).decode()})
+
+
+async def output_video(bot_id: str, jpeg: bytes) -> None:
+    await asyncio.to_thread(_call, "POST", f"bot/{bot_id}/output_video/",
+                            {"kind": "jpeg", "b64_data": base64.b64encode(jpeg).decode()})
+
+
+async def send_chat(bot_id: str, message: str) -> None:
+    # Google Meet allows 500 characters per message
+    await asyncio.to_thread(_call, "POST", f"bot/{bot_id}/send_chat_message/", {"to": "everyone", "message": message[:500]})
 
 
 async def leave(bot_id: str) -> None:

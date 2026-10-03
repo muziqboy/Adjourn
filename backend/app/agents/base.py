@@ -132,6 +132,10 @@ class AgentSpec:
     approval_again: str | None = None  # the label once delivered (after a steer), e.g. "Send update"
     approve: ApproveFn | None = None  # the outward action behind the click; returns (artifact, trace line)
     opens_link: Callable[[], bool] = field(default=lambda: False)  # links mode: the click opens artifact.link
+    # called (fire and forget) when the task starts waiting for its click, e.g. the answer agent
+    # raises the meeting bot's hand; failures are logged, never break the task
+    on_waiting: Callable[[Task], Awaitable[None]] | None = None
+    on_dismiss: Callable[[Task], Awaitable[None]] | None = None  # undo on_waiting (lower the hand)
     mock_intent: Callable[[MockIntent], None] | None = None
 
 

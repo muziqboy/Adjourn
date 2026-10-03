@@ -129,6 +129,8 @@ async def sync_once(store: Store, now: datetime | None = None) -> None:
     errors = []
     scheduled = []
     for event in meets:
+        if _bot_already_there(store, event):
+            continue  # a bot was sent by hand to this call; a scheduled one would be a second Adjourn
         if not event.get("bots"):
             try:
                 event = await recall.schedule_bot(event) or event
@@ -142,6 +144,11 @@ async def sync_once(store: Store, now: datetime | None = None) -> None:
              next_event=_summary(meets[0]) if meets else None,
              scheduled=scheduled,
              error=errors[0] if errors else None)
+
+
+def _bot_already_there(store: Store, event: dict) -> bool:
+    bot = store.bot
+    return bot.get("state") in ("joining", "waiting_room", "in_call") and bot.get("meeting_url") == event.get("meeting_url")
 
 
 def _is_live_meet(event: dict, now: datetime) -> bool:

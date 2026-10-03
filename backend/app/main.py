@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from . import agents
 from .api.mcp import build_mcp
 from .api.routes import build_router
+from .core import voice_commands
 from .core.intent import IntentSession
 from .core.orchestrator import Orchestrator
 from .core.config import settings
@@ -28,6 +29,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s
 orch = Orchestrator(store)
 intent = IntentSession(store, orch)
 store.line_listeners.append(intent.on_line)  # every finalised line feeds the meeting agent
+store.line_listeners.append(voice_commands.make_listener(store, orch))  # "Go ahead, Adjourn"
 store.describe_agents = agents.describe  # card labels for the panel
 
 mcp = build_mcp(store, orch, intent)

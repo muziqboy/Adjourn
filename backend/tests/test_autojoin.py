@@ -138,12 +138,12 @@ def test_webhook_from_unknown_bot_adopts_it(fake, orch):
 
     async def body():
         store.reset()
-        assert store.bot == {"state": "none", "bot_id": None}
+        assert (store.bot["state"], store.bot["bot_id"]) == ("none", None)
         words = [{"text": "Hello"}, {"text": "there"}]
         payload = {"event": "transcript.data",
                    "data": {"bot": {"id": "cal_bot"}, "data": {"words": words, "participant": {"name": "Bea"}}}}
         bot.handle_webhook(store, payload)
-        assert store.bot == {"state": "in_call", "bot_id": "cal_bot"}
+        assert (store.bot["state"], store.bot["bot_id"]) == ("in_call", "cal_bot")
         assert store.state == "live" and store.lines[-1]["text"] == "Hello there"
         assert bot._poller is not None and not bot._poller.done()
 
@@ -175,3 +175,34 @@ def test_connect_reuses_the_calendar_registered_for_the_account(fake, monkeypatc
     assert calls == [("GET", "calendars/")]  # no second calendar for the same account
     assert store.autojoin["enabled"] and store.autojoin["calendar_id"] == "cal_old"
     assert store.autojoin["email"] == "demo@example.com"
+
+
+def test_no_scheduled_bot_for_a_call_a_bot_was_sent_to_by_hand(monkeypatch):
+    """Sending the bot by hand ("start it now") must stop auto-join from adding a second one."""
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    from app.core.store import store
+    from app.integrations import recall
+    from app.listen import autojoin
+
+    now = datetime.now(timezone.utc)
+    url = "https://meet.google.com/abc-defg-hij"
+    event = {"id": "e1", "meeting_url": url, "bots": [], "is_deleted": False,
+             "start_time": (now + timedelta(minutes=20)).isoformat(), "end_time": (now + timedelta(minutes=40)).isoformat()}
+    calls = []
+
+    async def fake_list(calendar_id, since):
+        return [event]
+
+    async def fake_schedule(ev):
+        calls.append(ev["id"])
+        return ev
+
+    monkeypatch.setattr(recall, "list_upcoming_events", fake_list)
+    monkeypatch.setattr(recall, "schedule_bot", fake_schedule)
+    monkeypatch.setitem(autojoin.status, "calendar_id", "cal")
+    store.set_bot("in_call", "manual-bot", url)
+    asyncio.run(autojoin.sync_once(store, now))
+    assert calls == []
+    store.set_bot("none", None, "")

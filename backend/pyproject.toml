@@ -15,7 +15,10 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest"]
+dev = [
+    "pillow>=12.3.0",
+    "pytest",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

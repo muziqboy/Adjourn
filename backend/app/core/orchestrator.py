@@ -37,6 +37,7 @@ class Orchestrator:
         self.runs: dict[str, asyncio.Task] = {}  # task id -> the running agent
         self.external_ids: dict[str, str] = {}  # task id -> event / draft / issue id, kept across revisions
         self.locks: dict[str, asyncio.Lock] = {}  # task id -> serialises external writes
+        self._side_effects: set[asyncio.Task] = set()  # on_waiting hooks in flight
 
     def reset(self) -> None:
         for run in self.runs.values():
@@ -170,6 +171,8 @@ class Orchestrator:
                 ctx.trace("verify", "All checks passed")
             task.status = "needs_approval" if spec.approval or problems else "done"
             self.store.put_task(task)
+            if task.status == "needs_approval" and spec.on_waiting and not problems:
+                self._fire(spec.on_waiting(task.model_copy(deep=True)), f"{task.id} on_waiting")
         except asyncio.CancelledError:
             return  # trap 3: a cancelled run writes nothing
         except Exception as exc:  # noqa: BLE001
@@ -183,6 +186,17 @@ class Orchestrator:
             if self.runs.get(task_id) is asyncio.current_task():
                 del self.runs[task_id]
         self.reconcile()
+
+    def _fire(self, coro, label: str) -> None:
+        """Run a side effect in the background; log its failure instead of raising."""
+        async def guarded():
+            try:
+                await coro
+            except Exception:  # noqa: BLE001
+                log.exception("%s failed", label)
+        task = asyncio.create_task(guarded())
+        self._side_effects.add(task)
+        task.add_done_callback(self._side_effects.discard)
 
     async def _verify(self, spec, task: Task, artifact: Artifact, ctx: RunContext) -> list[str]:
         problems = await spec.verify(task, artifact, ctx)
@@ -227,7 +241,11 @@ class Orchestrator:
         if run is not None:
             run.cancel()
         self.store.trace(task_id, "info", "Dismissed")
+        was_waiting = task.status == "needs_approval"
         task.status = "dismissed"
         self.store.put_task(task)
+        spec = agents.get(task.type)
+        if was_waiting and spec and spec.on_dismiss:
+            self._fire(spec.on_dismiss(task.model_copy(deep=True)), f"{task_id} on_dismiss")
         self.reconcile()
         return task

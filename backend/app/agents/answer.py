@@ -3,7 +3,9 @@ hand, and on the click says the answer out loud in the meeting.
 
     run      Gemini + Google Search -> a short spoken answer with sources (panel only)
     verify   code: at least one source, short enough to say in ~20 s, no markdown or URLs
-    click    "Let it speak": the meeting bot says it in the call when one is in the meeting
+    waiting  with a meeting bot in the call, it raises its hand there (tile + chat message)
+    click    "Let it speak" on the panel, or "Go ahead, Adjourn" said in the call
+             (core/voice_commands.py): the meeting bot says it in the call when one is in the meeting
              (app/listen/bot.py); otherwise the panel speaks it through the laptop speakers
 """
 
@@ -59,6 +61,22 @@ async def approve(task: Task, ctx: RunContext) -> tuple[Artifact, str]:
     return task.artifact, "Spoken in the meeting through the laptop speakers"
 
 
+async def on_waiting(task: Task) -> None:
+    from ..core.store import store
+    from ..listen import bot
+
+    if bot.in_call(store):
+        bot.prepare_speech(task.artifact.content or "")  # ready by the time someone says "go ahead"
+        await bot.raise_hand(store, task.title)
+
+
+async def on_dismiss(task: Task) -> None:
+    from ..core.store import store
+    from ..listen import bot
+
+    await bot.lower_hand(store)
+
+
 # ---------- mock (LLM_MODE=mock) ----------
 
 QUESTION_START = r"^(would|should|could|does|do|is|are|will|can \w+ (help|work|handle|scale))\b"
@@ -112,5 +130,7 @@ AGENT = AgentSpec(
     approval="Let it speak",
     approval_again="Speak again",
     approve=approve,
+    on_waiting=on_waiting,
+    on_dismiss=on_dismiss,
     mock_intent=mock_intent,
 )
