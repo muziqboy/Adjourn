@@ -54,6 +54,8 @@ AFTER_SPEECH_S = 0.3  # sooner when speech_off says the last speaker stopped
 PAUSE_NAMED_S = 0.4  # sooner when Adjourn's name was just heard
 TALKING_STALE_S = 6.0  # a speech_on without speech_off for this long is ignored
 BARGE_IN_WORDS = 2  # without speech events: this many caption words while Adjourn talks stops it
+EVENT_QUIET_S = 2.5  # task news (draft ready, created) waits for a lull this long: no interrupting
+EVENT_MAX_WAIT_S = 45.0  # ...but not forever: then the mind decides (it raises a hand if still busy)
 MEMORY_LINES = 150  # transcript lines the mind sees (about 10-15 minutes of a busy call)
 FLOOR_MODEL: str | None = settings.floor_model  # tuned with scripts/eval_floor.py
 FLOOR_THINKING: str | None = settings.floor_thinking
@@ -79,6 +81,7 @@ SPEAKING ("action")
   a wrong fact that matters for a decision. At most one hand at a time.
 - Stay silent when people talk to each other, small talk, thinking out loud, someone is mid-sentence or already
   answering, or you are unsure you were addressed. Interrupting is worse than missing a chance.
+- If told to stop, be quiet, or "that's enough": stay silent. Do not even acknowledge it.
 - Like a sharp, friendly colleague: English, answer first, one to three short spoken sentences, first names, round
   numbers, no lists, URLs, markdown or emoji. Never filler ("I'm here", "ready to assist", "great question"),
   never talk about yourself or your reasoning, never repeat what was just said. Google Search for facts.
@@ -93,7 +96,9 @@ Agents do work for the meeting:
 - When they change agreed work (another assignee, title, time), add an "update" op with the task id and the complete
   new brief. Never create a second task for the same thing.
 - Approval: drafts marked "WAITING FOR APPROVAL (voice OK)" may be approved by voice. When such a draft is ready,
-  say what it is in one sentence and ask whether to create it. Put its id in "approve" ONLY when a participant
+  say what it is in one sentence and ask whether to create it, but only if the room is quiet. If the room is BUSY,
+  never interrupt with task news: raise your hand with the point ("The Linear draft for the onboarding copy is
+  ready.") and bring it up when invited or at the next lull. Put its id in "approve" ONLY when a participant
   clearly says yes to that item ("yes", "go ahead", "create it", "do it"). Unclear, or a different item: ask. Drafts
   marked "(needs a click)" are approved on the panel: say so if asked.
 - When they drop agreed work before it exists, put its id in "dismiss". Created tickets cannot be deleted by you:
@@ -133,6 +138,8 @@ class Floor:
         self.speaking = False  # the voice page is playing Adjourn's words
         self.last_spoke_at = 0.0
         self.new_since_decision = 0  # lines since the last decision
+        self.new_human_lines = 0  # of those, said by people (not task events)
+        self._event_since = 0.0  # when the oldest undecided task event arrived
         self.present: set[str] = set()  # people in the call (join/leave events, captions)
         self.talking: dict[str, float] = {}  # people talking right now -> last sign of speech
         self.has_speech_events = False  # this bot sends speech_on/off
@@ -144,6 +151,7 @@ class Floor:
         self._partial_words: dict[str, int] = {}
         self._seen_speakers: set[str] = set()
         self._jobs: set[asyncio.Task] = set()
+        self._unannounced: dict[str, int] = {}  # voice-OK drafts not yet brought up -> reminders sent
 
     def active(self) -> bool:
         """Live-voice mode: a voice page is connected, so this mind runs the meeting."""
@@ -217,6 +225,7 @@ class Floor:
         if final:
             self.lines.append((time.time(), who, text[:400], False))
             self.new_since_decision += 1
+            self.new_human_lines += 1
             self._last_final = text
         # the decision comes when captions go quiet; wait longer after a sentence fragment
         if final and NAME.search(text):
@@ -233,6 +242,8 @@ class Floor:
             return
         if task.status == "needs_approval":
             how = "voice OK" if task.type in settings.voice_approval else "needs a click"
+            if task.type in settings.voice_approval:
+                self._unannounced[task.id] = 0
             self._event(f"Draft ready, WAITING FOR APPROVAL ({how}): {self._describe_short(task)}")
         elif task.status == "done" and task.artifact and task.artifact.delivered:
             self._event(f"Done: {self._describe_short(task)}")
@@ -244,7 +255,12 @@ class Floor:
         self.lines.append((time.time(), EVENT, text, False))
         if decide:
             self.new_since_decision += 1
+            self._event_since = self._event_since or time.time()
             self._schedule(AFTER_SPEECH_S)
+
+    def room_busy(self) -> bool:
+        """People are talking, or were a moment ago: not the time to bring up task news."""
+        return self.someone_talking() or time.time() - self.last_caption_at < EVENT_QUIET_S
 
     def _schedule(self, delay: float) -> None:
         if self._timer and not self._timer.done():
@@ -257,6 +273,11 @@ class Floor:
             return
         if time.time() - self.last_caption_at < delay * 0.8:
             return  # a newer caption arrived; its own timer decides
+        only_events = self.new_human_lines == 0
+        waited = time.time() - (self._event_since or time.time())
+        if only_events and self.room_busy() and waited < EVENT_MAX_WAIT_S:
+            self._schedule(1.0)  # task news waits for a lull instead of interrupting
+            return
         if self._deciding and not self._deciding.done():
             self._deciding.cancel()  # newer speech supersedes an unfinished decision
         self._deciding = asyncio.create_task(self.decide())
@@ -321,11 +342,13 @@ class Floor:
             transcript.append(f"{mark}[{m:02d}:{s:02d}] {'You' if own else speaker}: {text}")
         tasks = [t for t in self.store.tasks.values() if t.status != "dismissed"]
         spoke = (f"You last spoke {int(now - self.last_spoke_at)} s ago." if self.last_spoke_at else "You have not spoken yet.")
+        quiet = int(now - self.last_caption_at) if self.last_caption_at else 0
+        room = ("BUSY: people are talking" if self.room_busy() else f"quiet for {quiet} s")
         return (
             f"Now: {datetime.now().astimezone():%A %d %B %Y %H:%M %Z}.\n"
             f"People in the call ({len(names)}):\n{roster}\n\n"
             f"Work in this meeting:\n" + ("\n".join(self._describe(t) for t in tasks) or "(none yet)") + "\n\n"
-            f"Your hand: {'RAISED, point: ' + self.hand if self.hand else 'down'}. {spoke}\n\n"
+            f"Your hand: {'RAISED, point: ' + self.hand if self.hand else 'down'}. {spoke} Room: {room}.\n\n"
             f"Transcript (oldest first; '>>' marks what is new since your last decision):\n" + "\n".join(transcript)
             + "\n\nDecide now."
         )
@@ -339,6 +362,8 @@ class Floor:
     async def decide(self) -> dict:
         prompt = self.prompt()  # before resetting the counter: it marks the fresh lines
         self.new_since_decision = 0
+        self.new_human_lines = 0
+        self._event_since = 0.0
         started = time.time()
         last_line = self.lines[-1][2] if self.lines else ""
         result = await llm.generate(
@@ -351,7 +376,23 @@ class Floor:
         if self.last_caption_at > started and not NAME.search(last_line):
             return decision  # someone kept talking while we decided; their caption's timer decides again
         self.apply(decision)
+        if decision["action"] in ("speak", "raise_hand"):
+            self._unannounced.clear()  # it had the drafts in view and spoke up or raised a hand
+        elif self._unannounced:
+            self._run(self._remind_later(), "draft reminder")
         return decision
+
+    async def _remind_later(self) -> None:
+        """A voice-OK draft it stayed silent about (the room was busy) comes up again at the next
+        lull, at most twice, so a ready ticket is never forgotten."""
+        await asyncio.sleep(EVENT_QUIET_S * 2)
+        for task_id, sent in list(self._unannounced.items()):
+            task = self.store.tasks.get(task_id)
+            if task is None or task.status != "needs_approval" or sent >= 2:
+                self._unannounced.pop(task_id, None)
+                continue
+            self._unannounced[task_id] = sent + 1
+            self._event(f"Still WAITING FOR APPROVAL (voice OK): {self._describe_short(task)}")
 
     def apply(self, decision: dict) -> None:
         self._apply_work(decision)
@@ -423,6 +464,8 @@ class Floor:
     def reset(self) -> None:
         self.lines.clear()
         self.hand, self.speaking, self.last_spoke_at, self.new_since_decision = None, False, 0.0, 0
+        self.new_human_lines, self._event_since = 0, 0.0
+        self._unannounced.clear()
         self.talking.clear()
         self.present.clear()
         self._task_status.clear()

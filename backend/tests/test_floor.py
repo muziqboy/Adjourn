@@ -2,6 +2,7 @@
 the raised hand. The real model is evaluated by scripts/eval_floor.py."""
 
 import asyncio
+import time
 
 from app.core.store import store
 from app.listen import floor as floor_module
@@ -182,6 +183,7 @@ def test_voice_approval_end_to_end(orch, monkeypatch):
     monkeypatch.setattr(floor_module, "QUIET_S", 0.05)
     monkeypatch.setattr(floor_module, "QUIET_OPEN_S", 0.05)
     monkeypatch.setattr(floor_module, "AFTER_SPEECH_S", 0.05)
+    monkeypatch.setattr(floor_module, "EVENT_QUIET_S", 0.2)
     settings.agents = ["linear", "schedule"]
     linear.fake.reset()
 
@@ -217,5 +219,22 @@ def test_no_voice_approval_for_click_only_types(orch):
         floor.apply({"action": "silent", "approve": ["t9"]})
         await asyncio.sleep(0.05)
         assert store.tasks["t9"].status == "needs_approval"  # schedule needs the click
+
+    run(body())
+
+
+def test_task_news_waits_for_a_lull(orch, monkeypatch):
+    monkeypatch.setattr(floor_module, "AFTER_SPEECH_S", 0.05)
+    monkeypatch.setattr(floor_module, "EVENT_QUIET_S", 0.6)
+
+    async def body():
+        floor, page = make_floor()
+        floor.on_speech("Jany", True)  # Jany is mid-explanation
+        floor.last_caption_at = time.time()
+        floor._event("Draft ready, WAITING FOR APPROVAL (voice OK): t3 linear \u201cX\u201d")
+        await asyncio.sleep(0.4)
+        assert page.sent == []  # no interruption
+        floor.on_speech("Jany", False)
+        await until(lambda: any("Shall I create it" in m.get("text", "") for m in page.sent), timeout=5)
 
     run(body())

@@ -28,6 +28,9 @@ WORK = [
      [("Kaleb Girmay", "Adjourn, can you make a Linear ticket for the onboarding copy and give it to Jany?")], []),
     ("draft ready event", lambda d: d["action"] == "speak" and "?" in d["say"] and not d["approve"],
      [(EVENT, "Draft ready, WAITING FOR APPROVAL (voice OK): t3 linear \u201cRewrite the onboarding copy\u201d -> Jany Koulen")], [DRAFT]),
+    ("draft ready, room busy", lambda d: d["action"] in ("raise_hand", "silent") and not d["approve"],
+     [("Jany Koulen", "So the way I see the onboarding flow, the second screen should explain pricing and then"),
+      (EVENT, "Draft ready, WAITING FOR APPROVAL (voice OK): t3 linear \u201cRewrite the onboarding copy\u201d -> Jany Koulen")], [DRAFT]),
     ("yes approves", lambda d: d["approve"] == ["t3"],
      [("You", "The Linear ticket for the onboarding copy is drafted for Jany. Shall I create it?"), ("Kaleb Girmay", "Yes, go ahead.")], [DRAFT]),
     ("reassign draft", lambda d: any(t.get("op") == "update" and t.get("id") == "t3" and "sara" in t.get("brief", "").lower() for t in d["tasks"]) and not d["approve"],
@@ -104,6 +107,9 @@ async def main() -> None:
         for speaker, text in lines:
             floor.lines.append((time.time(), "Adjourn" if speaker == "You" else speaker, text, speaker == "You"))
         floor.new_since_decision = len(lines)
+        if "busy" in name:
+            floor.talking["Jany Koulen"] = time.time()
+            floor.last_caption_at = time.time()
         start = time.time()
         decision = await floor.decide()
         ok = bool(check(decision))
