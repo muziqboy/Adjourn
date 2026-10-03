@@ -53,6 +53,7 @@ QUIET_OPEN_S = 1.1  # longer after a fragment that does not end a sentence (Meet
 AFTER_SPEECH_S = 0.3  # sooner when speech_off says the last speaker stopped
 PAUSE_NAMED_S = 0.4  # sooner when Adjourn's name was just heard
 TALKING_STALE_S = 6.0  # a speech_on without speech_off for this long is ignored
+BARGE_IN_HOLD_S = 0.6  # a person must keep talking this long to stop Adjourn (a cough or a blip does not)
 BARGE_IN_WORDS = 2  # without speech events: this many caption words while Adjourn talks stops it
 EVENT_QUIET_S = 2.5  # task news (draft ready, created) waits for a lull this long: no interrupting
 EVENT_MAX_WAIT_S = 45.0  # ...but not forever: then the mind decides (it raises a hand if still busy)
@@ -208,13 +209,20 @@ class Floor:
         if talking:
             self.talking[speaker] = time.time()
             if self.speaking:
-                self._send({"type": "stop"})  # a person started talking: Adjourn yields at once
-                self.speaking = False
-                log.info("barge-in by %s", speaker)
+                self._run(self._barge_in_if_sustained(speaker, self.talking[speaker]), "barge-in check")
         else:
             self.talking.pop(speaker, None)
             if not self.someone_talking() and time.time() - self.last_caption_at > AFTER_SPEECH_S:
                 self._schedule(AFTER_SPEECH_S)
+
+    async def _barge_in_if_sustained(self, speaker: str, since: float) -> None:
+        """Stop Adjourn only if the person is still talking BARGE_IN_HOLD_S later: real speech, not
+        a cough or a noisy-microphone blip (both of which cut it off mid-sentence before)."""
+        await asyncio.sleep(BARGE_IN_HOLD_S)
+        if self.speaking and self.talking.get(speaker) == since:
+            self._send({"type": "stop"})
+            self.speaking = False
+            log.info("barge-in by %s", speaker)
 
     def on_caption(self, speaker: str | None, text: str, final: bool) -> None:
         text = " ".join(text.split())

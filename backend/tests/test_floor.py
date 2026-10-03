@@ -94,9 +94,9 @@ def test_speech_events_drive_turn_taking(orch, monkeypatch):
         floor.on_speech("Kaleb", False)
         await until(lambda: "say" in kinds(page))
 
-        floor.on_speech("Sara", True)  # Sara talks over Adjourn
+        floor.on_speech("Sara", True)  # Sara talks over Adjourn...
+        await until(lambda: kinds(page)[-1] == "stop")  # ...and keeps talking: it stops
         assert not floor.speaking
-        await until(lambda: kinds(page)[-1] == "stop")
 
     run(body())
 
@@ -267,5 +267,19 @@ def test_meeting_about_a_ticket_picks_up_its_identifier(orch):
         await until(lambda: meeting.revision == 2 and meeting.status == "needs_approval", timeout=10)
         description = calendar.fake.events[event_id]["description"]
         assert ticket.artifact.external_id in description and list(calendar.fake.events) == [event_id]
+
+    run(body())
+
+
+def test_a_cough_does_not_stop_it(orch, monkeypatch):
+    monkeypatch.setattr(floor_module, "BARGE_IN_HOLD_S", 0.2)
+
+    async def body():
+        floor, page = make_floor()
+        floor.apply({"action": "speak", "say": "Redis helps if many searches repeat."})
+        floor.on_speech("Sara", True)  # a cough...
+        floor.on_speech("Sara", False)  # ...over in a moment
+        await asyncio.sleep(0.4)
+        assert floor.speaking and "stop" not in kinds(page)
 
     run(body())
