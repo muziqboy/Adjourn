@@ -1,22 +1,14 @@
 <!doctype html>
 <!--
-  Adjourn's live voice. Recall's bot loads this page as its camera and microphone
-  (Output Media): what this page shows is the bot's tile, what it plays the meeting hears,
-  and getUserMedia gives it the meeting's audio. Gemini Live (native audio) does the talking.
-  Served and tokened by backend/app/listen/live_voice.py.
+  Adjourn's voice and face in the meeting. Recall's bot loads this page as its camera and
+  microphone (Output Media): what it shows is the bot's tile, what it plays the meeting hears.
 
-  States of the tile:
-    listening   orb breathing, ripples with the room's sound
-    hand        Adjourn has something to say but was not asked: big raised hand, reply held
-    speaking    green orb, sound bars moving with its voice
-    error       red orb with the reason
-
-  When may it speak? Gemini decides: it hears the real audio (our own transcription garbles
-  "Adjourn"). Its instructions say to speak only when addressed or invited, and otherwise to
-  call the raise_hand tool, which shows the hand here; lower_hand takes it down. Audio it does
-  produce is played, except replies that talk about themselves ("I was not addressed", "I'll stay
-  silent"): the first moments of each reply wait for its transcript (META below) so those are
-  dropped unheard. Gemini also has a stay_silent tool so declining is an action, not a sentence.
+  It decides nothing. backend/app/listen/floor.py is the mind; it sends over /voice/ws:
+    {"type": "say", "text"}          speak these words (Gemini Live, voice only)
+    {"type": "stop"}                 someone started talking: stop now
+    {"type": "hand", "up", "point"}  raise or lower the hand on the tile
+  and gets back {"type": "spoken"} when a line has finished playing, plus log lines.
+  Gemini Live never hears the meeting, so it cannot react to chatter on its own.
 -->
 <html lang="en">
 <head>
@@ -93,66 +85,28 @@ import { GoogleGenAI, Modality } from "https://cdn.jsdelivr.net/npm/@google/gena
 
 const token = new URLSearchParams(location.search).get("token");
 const $ = (id) => document.getElementById(id);
-const log = (msg) => {
-  console.log(msg);
-  fetch(`/voice/log?token=${token}`, { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ msg: String(msg) }) }).catch(() => {});
-};
+let ws = null;
+const send = (obj) => { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); };
+const log = (msg) => { console.log(msg); send({ type: "log", msg: String(msg) }); };
+
+// ---- the tile ----
+let handUp = false, handPoint = "";
 function setState(state, status, hint) {
   document.body.className = state;
   $("status").textContent = status;
   if (hint !== undefined) $("hint").textContent = hint;
 }
-const LISTENING = () => setState("listening", "Listening", "Say “Adjourn, …” to ask me anything");
+function idle() {
+  if (handUp) setState("hand-up", "I have something to add", "Say “Go ahead, Adjourn”");
+  else setState("listening", "Listening", "Say “Adjourn, …” to ask me anything");
+}
 
-// ---- dropping replies that narrate the model's own decision --------------------------------
-const META = /(no audio|not (been )?address|did(n't| not) address|remain(ing)? silent|stay(ing)? silent|standing by|i'?m (here|ready)|as an ai|the user (did|has|addressed)|i will (now )?(stay|remain|wait))/i;
-const GATE_MS = 700;  // max wait for the first words of a reply before playing it anyway
-let turnState = null;  // null | "gating" | "play" | "drop"
-let gated = [], gateTimer = null, turnText = "";
-function openGate() {
-  if (turnState !== "gating") return;
-  clearTimeout(gateTimer);
-  turnState = "play";
-  gated.forEach(play); gated = [];
-}
-function onReplyAudio(b64) {
-  if (turnState === null) { turnState = "gating"; gateTimer = setTimeout(openGate, GATE_MS); }
-  if (turnState === "gating") gated.push(b64);
-  else if (turnState === "play") play(b64);
-}
-function onReplyText(text) {
-  turnText += text;
-  if (turnState === "drop") return;
-  if (META.test(turnText)) {
-    log(`dropped a reply about itself: ${turnText.slice(0, 120)}`);
-    clearTimeout(gateTimer); gated = []; turnState = "drop"; stopPlayback(); LISTENING();
-  } else if (turnState === "gating" && turnText.trim().split(/\s+/).length >= 4) openGate();
-}
-function endTurn() { clearTimeout(gateTimer); if (turnState === "gating") openGate(); turnState = null; turnText = ""; }
-
-// ---- the raised hand, driven by Gemini's raise_hand / lower_hand tools ----------------
-const HAND_MS = 90000;  // the hand comes down by itself after this
-let handAt = 0, handPoint = "";
-function raiseHand(point) {
-  handAt = Date.now(); handPoint = point || "";
-  if (playing.size === 0) setState("hand-up", "I have something to add", "Say “Go ahead, Adjourn”");
-  log(`hand up: ${handPoint.slice(0, 160)}`);
-}
-function lowerHand(why) {
-  if (!handAt) return;
-  handAt = 0; handPoint = "";
-  log(`hand down: ${why}`);
-  if (playing.size === 0) LISTENING();
-}
-setInterval(() => { if (handAt && Date.now() - handAt > HAND_MS) lowerHand("timeout"); }, 1000);
-
-// ---- playback of Gemini's 24 kHz PCM, queued back to back; cleared on interruption ----
+// ---- playback of Gemini's 24 kHz PCM, queued back to back ----
 const out = new AudioContext({ sampleRate: 24000 });
 const analyser = out.createAnalyser();
 analyser.fftSize = 256;
 analyser.connect(out.destination);
-let playHead = 0;
+let playHead = 0, line = 0, playingLine = 0, turnDone = true;
 const playing = new Set();
 function play(b64) {
   const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
@@ -163,115 +117,82 @@ function play(b64) {
   const src = out.createBufferSource();
   src.buffer = buf;
   src.connect(analyser);
-  playHead = Math.max(playHead, out.currentTime + 0.05);  // tiny jitter buffer
+  playHead = Math.max(playHead, out.currentTime + 0.05);
   src.start(playHead);
   playHead += buf.duration;
   playing.add(src);
-  if (handAt) lowerHand("speaking");  // it was invited
-  if (document.body.className !== "speaking") setState("speaking", "Speaking");
-  src.onended = () => {
-    playing.delete(src);
-    if (playing.size === 0) LISTENING();
-  };
+  src.onended = () => { playing.delete(src); maybeDone(); };
+}
+function maybeDone() {
+  if (playing.size === 0 && turnDone && playingLine) { playingLine = 0; send({ type: "spoken" }); idle(); }
 }
 function stopPlayback() {
   for (const src of playing) { try { src.stop(); } catch {} }
   playing.clear();
   playHead = 0;
+  if (playingLine) { playingLine = 0; send({ type: "spoken" }); }
+  idle();
 }
 
-// sound bars follow Adjourn's voice; the ring follows the room
+// sound bars follow Adjourn's voice
 const bars = [...$("bars").children];
 const levels = new Uint8Array(analyser.frequencyBinCount);
-let roomLevel = 0;
 (function draw() {
   analyser.getByteFrequencyData(levels);
   bars.forEach((bar, i) => { bar.style.height = `${10 + (levels[3 + i * 4] / 255) * 60}px`; });
-  $("ring").style.setProperty("--level", roomLevel.toFixed(3));
   requestAnimationFrame(draw);
 })();
 
-// ---- the meeting's audio, cut into 16 kHz PCM frames for Gemini ----
-const WORKLET = `
-class Pcm extends AudioWorkletProcessor {
-  constructor() { super(); this.buf = new Int16Array(1600); this.n = 0; this.peak = 0; }
-  process(inputs) {
-    const ch = inputs[0] && inputs[0][0];
-    if (!ch) return true;
-    for (let i = 0; i < ch.length; i++) {
-      const s = Math.max(-1, Math.min(1, ch[i]));
-      this.peak = Math.max(this.peak, Math.abs(s));
-      this.buf[this.n++] = s < 0 ? s * 0x8000 : s * 0x7fff;
-      if (this.n === this.buf.length) {
-        this.port.postMessage({ pcm: this.buf.buffer, peak: this.peak }, [this.buf.buffer]);
-        this.buf = new Int16Array(1600); this.n = 0; this.peak = 0;
-      }
-    }
-    return true;
-  }
-}
-registerProcessor("pcm", Pcm);`;
-
-function b64(buffer) {
-  let s = "";
-  const bytes = new Uint8Array(buffer);
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(s);
-}
-
-async function main() {
+// ---- Gemini Live as a voice: text in, speech out ----
+let session = null, said = "";
+async function connectVoice() {
   const info = await fetch(`/voice/session?token=${token}`, { method: "POST" }).then((r) => r.json());
-  log(`token ok, model ${info.model}`);
   const ai = new GoogleGenAI({ apiKey: info.token, httpOptions: { apiVersion: "v1alpha" } });
-
-  let said = "", heard = "";
-  let session;
   session = await ai.live.connect({
     model: info.model,
     config: { responseModalities: [Modality.AUDIO] },
     callbacks: {
-      onopen: () => log("live open"),
+      onopen: () => log("voice ready"),
       onmessage: (m) => {
-        for (const call of m.toolCall?.functionCalls ?? []) {
-          if (call.name === "raise_hand") raiseHand(call.args?.point);
-          if (call.name === "lower_hand") lowerHand("Gemini lowered it");
-          if (call.name === "stay_silent") log("stayed silent");
-          session.sendToolResponse({ functionResponses: [{ id: call.id, name: call.name, response: { result: "ok" } }] });
-        }
         const sc = m.serverContent;
         if (!sc) return;
-        if (sc.inputTranscription?.text) heard += sc.inputTranscription.text;
-        if (sc.interrupted) { log("interrupted"); stopPlayback(); endTurn(); }
-        for (const part of sc.modelTurn?.parts ?? []) if (part.inlineData?.data) onReplyAudio(part.inlineData.data);
-        if (sc.outputTranscription?.text) {
-          said += sc.outputTranscription.text;
-          onReplyText(sc.outputTranscription.text);
-          if (turnState !== "drop") $("hint").textContent = said.slice(-160);
-        }
-        if (sc.turnComplete) {
-          if (said) log(`[${turnState ?? "done"}] heard: ${heard.slice(-160)} | said: ${said}`);
-          endTurn(); said = ""; heard = "";
-        }
+        if (playingLine !== line) return;  // a stopped line's leftover audio
+        for (const part of sc.modelTurn?.parts ?? []) if (part.inlineData?.data) play(part.inlineData.data);
+        if (sc.outputTranscription?.text) said += sc.outputTranscription.text;
+        if (sc.turnComplete) { turnDone = true; log(`spoke: ${said}`); said = ""; maybeDone(); }
       },
-      onerror: (e) => { log(`live error: ${e.message ?? e}`); setState("error", "Voice error"); },
-      onclose: (e) => { log(`live closed: ${e.code} ${e.reason}`); setState("error", "Reconnecting…"); setTimeout(() => location.reload(), 2000); },
+      onerror: (e) => log(`voice error: ${e.message ?? e}`),
+      onclose: (e) => { log(`voice closed: ${e.code} ${e.reason}`); session = null; setTimeout(connectVoice, 1000); },
     },
   });
-
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  const ctx = new AudioContext({ sampleRate: 16000 });
-  await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" })));
-  const node = new AudioWorkletNode(ctx, "pcm");
-  ctx.createMediaStreamSource(stream).connect(node);
-  node.port.onmessage = (e) => {
-    roomLevel = roomLevel * 0.7 + Math.min(1, e.data.peak * 2) * 0.3;
-    session.sendRealtimeInput({ audio: { data: b64(e.data.pcm), mimeType: "audio/pcm;rate=16000" } });
-  };
-  log("streaming meeting audio to Gemini Live");
-  LISTENING();
 }
 
-main().catch((e) => { log(`failed: ${e.stack ?? e}`); setState("error", "Voice error", String(e).slice(0, 120)); });
+function say(text) {
+  if (!session) { log("say ignored: voice not connected"); return; }
+  if (out.state !== "running") out.resume();  // autoplay policies start audio suspended
+  stopPlayback();
+  line += 1; playingLine = line; turnDone = false; said = "";
+  handUp = false;
+  setState("speaking", "Speaking", text.slice(0, 160));
+  session.sendClientContent({ turns: [{ role: "user", parts: [{ text }] }], turnComplete: true });
+}
+
+// ---- the mind's commands ----
+function connectMind() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${proto}://${location.host}/voice/ws?token=${token}`);
+  ws.onopen = () => { log("mind connected"); idle(); };
+  ws.onmessage = (e) => {
+    const cmd = JSON.parse(e.data);
+    if (cmd.type === "say") say(cmd.text);
+    else if (cmd.type === "stop") { log("stop (someone started talking)"); line += 1; stopPlayback(); }
+    else if (cmd.type === "hand") { handUp = cmd.up; handPoint = cmd.point || ""; if (!playingLine) idle(); }
+  };
+  ws.onclose = () => setTimeout(connectMind, 1000);
+}
+
+connectMind();
+connectVoice().catch((e) => { log(`voice failed: ${e}`); setState("error", "Voice error", String(e).slice(0, 120)); });
 </script>
 </body>
 </html>

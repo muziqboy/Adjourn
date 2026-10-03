@@ -124,6 +124,10 @@ def build_router(store: Store, orch: Orchestrator, intent: IntentSession) -> API
         stop_replay()
         if store.bot.get("state") in ("joining", "waiting_room", "in_call"):
             await bot.leave(store)
+        from ..listen import floor
+
+        if floor.current is not None:
+            floor.current.reset()
         orch.reset()
         intent.reset()
         integrations.reset_mocks()

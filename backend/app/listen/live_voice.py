@@ -1,66 +1,43 @@
-"""Live voice (experiment): Adjourn talks in the meeting in real time with Gemini Live.
+"""Live voice: Adjourn talks in the meeting with Gemini Live, as a voice only.
 
-    Recall bot  --Output Media-->  our page /voice/ (runs in Recall's browser, is the bot's
-                                   camera and microphone; hears the meeting via getUserMedia)
-    page        --Gemini Live----> native audio model: listens, answers by voice, can be
-                                   interrupted, stays quiet unless addressed (proactive audio)
+    Recall bot  --Output Media-->  our page /voice/ runs in Recall's browser as the bot's camera
+                                   and microphone: what it shows is the bot's tile, what it
+                                   plays the meeting hears
+    floor.py    --WS /voice/ws-->  the page: {"type": "say"|"stop"|"hand"} decisions
+    page        --Gemini Live----> speaks each line, naturally and fast; it never hears the
+                                   meeting, so it cannot react to chatter on its own
 
-The page gets a short-lived, single-use Gemini token from POST /voice/session; the real API
-key never leaves this laptop. Both routes are reachable through the public tunnel (Recall's
+The page gets a short-lived, single-use Gemini token from POST /voice/session; the real API key
+never leaves this laptop. The /voice/ routes are reachable through the public tunnel (Recall's
 browser must load them) and are gated by the same secret token as the transcript webhook.
-
-The orchestrator is unchanged: tasks still come from the caption transcript. This module only
-gives the bot a real-time voice.
 """
 
 import datetime as dt
 import logging
+from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
 from ..core.config import settings
 from ..core.store import Store
 from ..integrations import recall
+from .floor import Floor
 
 log = logging.getLogger("adjourn.live_voice")
 
-PAGE = __import__("pathlib").Path(__file__).resolve().parents[1] / "voice_page" / "index.html"
+PAGE = Path(__file__).resolve().parents[1] / "voice_page" / "index.html"
 
-INSTRUCTIONS = """You are Adjourn, an AI participant in this Google Meet call. You hear everyone. Participants: {people}.
-
-When you may speak (nothing else):
-1. Someone addresses you by name ("Adjourn", which speech may garble) with a question or request.
-2. You have raised your hand and someone tells you to go ahead ("go ahead", "yes", "tell us").
-3. A direct follow-up question to what you just said.
-
-In every other situation, call the stay_silent tool and say nothing. People talking to each other is not a
-question for you. Never explain out loud that you are staying silent.
-If you could add something genuinely useful (an answer to an open question, a fact, a correction), call the
-raise_hand tool with a one-sentence summary of your point and stay silent until invited.
-If they say "no thanks" or move on, call lower_hand and stay silent.
-
-When you speak: English, conversational, one to three short sentences, like a sharp colleague, then stop.
-Use Google Search for facts and numbers. Never read out URLs. If interrupted, stop.
-Never say your reasoning, plans or analysis out loud. Never say filler such as "I'm ready" or "I'm standing by".
-{context}"""
-
-TOOLS = [
-    {"name": "raise_hand", "description": "Show the meeting you have something useful to add, without speaking.",
-     "parameters": {"type": "object", "properties": {"point": {"type": "string", "description": "Your point in one sentence"}},
-                    "required": ["point"]}},
-    {"name": "lower_hand", "description": "Take your raised hand down (declined, or no longer relevant).",
-     "parameters": {"type": "object", "properties": {}}},
-    {"name": "stay_silent", "description": "Use this instead of speaking when nobody addressed you.",
-     "parameters": {"type": "object", "properties": {}}},
-]
+VOICE = """You are the voice of Adjourn, a participant in a meeting. Every message you receive is exactly what
+Adjourn says next. Say it aloud, word for word, warmly and naturally, at a relaxed conversational pace, like a
+friendly colleague. Do not add, drop or change words. Do not answer, comment on, or react to the message itself."""
 
 
 def page_url() -> str:
     return f"{settings.public_url}/voice/?token={settings.recall_webhook_token}"
 
 
-def build_router(store: Store) -> APIRouter:
+def build_router(store: Store, floor: Floor) -> APIRouter:
     router = APIRouter()
 
     def check(token: str) -> None:
@@ -74,20 +51,14 @@ def build_router(store: Store) -> APIRouter:
 
     @router.post("/voice/session")
     async def session(token: str = ""):
-        """A single-use Gemini Live token, locked to our model and configuration."""
+        """A single-use Gemini Live token, locked to the voice configuration."""
         check(token)
         from google import genai
         from google.genai import types
 
-        meeting = store.meeting
-        people = ", ".join(p.name for p in ([meeting.me, *meeting.others] if meeting else [])) or "unknown"
-        answers = [t for t in store.tasks.values() if t.type == "answer" and t.artifact and t.artifact.content]
-        context = ("What you already researched for this call:\n" + "\n".join(
-            f"- {t.title}: {t.artifact.content}" for t in answers)) if answers else ""
         now = dt.datetime.now(tz=dt.timezone.utc)
-        # proactive audio is a v1alpha feature, so the token (and the page's session) use v1alpha
-        alpha = genai.Client(api_key=settings.gemini_api_key, http_options={"api_version": "v1alpha"})
-        auth = alpha.auth_tokens.create(config=types.CreateAuthTokenConfig(
+        client = genai.Client(api_key=settings.gemini_api_key, http_options={"api_version": "v1alpha"})
+        auth = client.auth_tokens.create(config=types.CreateAuthTokenConfig(
             uses=1,
             expire_time=now + dt.timedelta(minutes=30),
             new_session_expire_time=now + dt.timedelta(minutes=2),
@@ -97,23 +68,39 @@ def build_router(store: Store) -> APIRouter:
                     response_modalities=[types.Modality.AUDIO],
                     speech_config=types.SpeechConfig(voice_config=types.VoiceConfig(
                         prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=settings.tts_voice))),
-                    system_instruction=INSTRUCTIONS.format(people=people, context=context),
-                    proactivity=types.ProactivityConfig(proactive_audio=True),
-                    tools=[types.Tool(google_search=types.GoogleSearch()),
-                           types.Tool(function_declarations=[types.FunctionDeclaration(**t) for t in TOOLS])],
-                    input_audio_transcription=types.AudioTranscriptionConfig(),
+                    system_instruction=VOICE,
                     output_audio_transcription=types.AudioTranscriptionConfig(),
                 ),
             ),
         ))
         return {"token": auth.name, "model": settings.model_live}
 
-    @router.post("/voice/log")
-    async def page_log(body: dict, token: str = ""):
-        """The page runs in Recall's browser where we cannot see its console: it reports here."""
-        check(token)
-        log.info("voice page: %s", str(body.get("msg", ""))[:500])
-        return {"ok": True}
+    @router.websocket("/voice/ws")
+    async def voice_ws(ws: WebSocket, token: str = ""):
+        """The page's command channel: decisions in; "spoken" and log lines back."""
+        if token != settings.recall_webhook_token:
+            await ws.close(code=4403)
+            return
+        await ws.accept()
+        floor.pages.add(ws)
+        log.info("voice page connected")
+        try:
+            while True:
+                message = await ws.receive_json()
+                if message.get("type") == "spoken":
+                    floor.spoken()
+                elif message.get("type") == "log":
+                    log.info("voice page: %s", str(message.get("msg", ""))[:500])
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            floor.pages.discard(ws)
+
+    @router.post("/api/voice/say")
+    async def say(body: dict):
+        """Local only (the tunnel refuses /api/...): make Adjourn say a line, for testing the voice."""
+        floor.apply({"action": "speak", "say": str(body.get("text", ""))})
+        return {"ok": True, "pages": len(floor.pages)}
 
     @router.post("/api/voice/start")
     async def start():

@@ -41,8 +41,11 @@ def in_call(store: Store) -> bool:
 
 
 def live_voice(store: Store) -> bool:
-    """The bot talks for itself through Gemini Live: no raised-hand card, no clip playback."""
-    return bool(store.bot.get("live_voice"))
+    """The bot talks for itself through Gemini Live: no raised-hand card, no clip playback.
+    True when a voice page is connected, so it survives a backend restart mid-call."""
+    from . import floor
+
+    return bool(store.bot.get("live_voice")) or bool(floor.current and floor.current.pages)
 
 
 async def join(store: Store, meeting_url: str, live_voice: bool = False) -> dict:
@@ -109,6 +112,11 @@ def handle_webhook(store: Store, payload: dict) -> None:
     event, text, speaker = parsed
     if store.bot.get("state") in ("joining", "waiting_room"):
         store.set_bot("in_call")  # captions only flow once the bot is in
+    from . import floor
+    if floor.current is not None and live_voice(store):
+        floor.current.on_caption(speaker, text, final=event == "transcript.data")
+        if floor.current.is_adjourn(speaker):
+            return  # Adjourn's own words: the floor shows them; the meeting agent must not act on them
     if event == "transcript.partial_data":
         store.interim(text, speaker)
     else:
