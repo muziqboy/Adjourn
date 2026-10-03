@@ -31,6 +31,12 @@ def _load_env() -> None:
 _load_env()
 
 
+def _contacts(raw: str) -> dict[str, str]:
+    """CONTACTS="Jany=jany@example.com, Kaleb=kaleb@example.com" -> {"jany": "jany@example.com", ...}"""
+    pairs = (item.split("=", 1) for item in raw.split(",") if "=" in item)
+    return {name.strip().lower(): email.strip() for name, email in pairs if name.strip() and email.strip()}
+
+
 def _list(name: str, default: str) -> list[str]:
     return [item.strip() for item in os.getenv(name, default).split(",") if item.strip()]
 
@@ -94,6 +100,9 @@ class Settings:
 
         # --- meeting defaults (prefill the setup screen; used by replays) ---
         self.timezone = os.getenv("TIMEZONE", "Europe/Stockholm")
+        # Names -> emails for people Meet does not share an email for (invites need one).
+        # The calendar invite of the meeting itself comes first; this is the fallback.
+        self.contacts = _contacts(os.getenv("CONTACTS", ""))
         self.me_name = os.getenv("ME_NAME", "Alex")
         self.me_email = os.getenv("ME_EMAIL", "demo-a@gmail.com")
         self.guest_name = os.getenv("GUEST_NAME", "Bea")

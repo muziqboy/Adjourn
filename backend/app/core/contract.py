@@ -48,6 +48,7 @@ class Artifact(BaseModel):
     end: str | None = None
     attendees: list[str] = Field(default_factory=list)
     note: str | None = None  # "no conflicts", "14:00 was taken, moved to 14:30"
+    meet_link: str | None = None  # event: the Google Meet URL in the invite
     # draft, issue
     to: list[str] = Field(default_factory=list)
     subject: str | None = None

@@ -30,6 +30,7 @@ export interface Artifact {
   end: string | null;
   attendees: string[];
   note: string | null;        // event: "no conflicts", "14:00 was taken, moved to 14:30"
+  meet_link?: string | null;  // event: the Google Meet URL in the invite
   to: string[];               // draft
   subject: string | null;
   body: string | null;        // draft (plain text), issue (markdown)
