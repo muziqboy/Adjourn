@@ -85,6 +85,10 @@ CASES = [
         ("Kaleb", "Search has been really slow this week, p95 is around 800 milliseconds."),
         ("Sara", "Would Redis help speed up our API? I honestly don't know."),
         ("Kaleb", "Hmm, not sure either.")], None),
+    ("debating a choice", {"raise_hand"}, [
+        ("Chinmay Pant", "For the new pricing service, should we go with Python or Node?"),
+        ("Jany Koulen", "I'm honestly not sure, both could work."),
+        ("Chinmay Pant", "Yeah, hard to say.")], None),
     ("small talk", {"silent"}, [("Kaleb", "How was your weekend?"), ("Sara", "Good, we went hiking in the archipelago.")], None),
     ("unfinished", {"silent"}, [("Kaleb", "So I think we should ship it on Thursday and")], None),
     ("people answering each other", {"silent"}, [

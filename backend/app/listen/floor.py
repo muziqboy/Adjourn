@@ -55,7 +55,7 @@ AFTER_SPEECH_S = 0.3  # sooner when speech_off says the last speaker stopped
 PAUSE_NAMED_S = 0.4  # sooner when Adjourn's name was just heard
 TALKING_STALE_S = 6.0  # a speech_on without speech_off for this long is ignored
 ECHO_WINDOW_S = 2.5  # unnamed captions this soon after Adjourn spoke are its own voice coming back
-BARGE_IN_HOLD_S = 0.6  # a person must keep talking this long to stop Adjourn (a cough or a blip does not)
+BARGE_IN_HOLD_S = 2.5  # speech_on alone (no caption words yet) stops Adjourn only after this long
 BARGE_IN_WORDS = 2  # without speech events: this many caption words while Adjourn talks stops it
 EVENT_QUIET_S = 2.5  # task news (draft ready, created) waits for a lull this long: no interrupting
 EVENT_MAX_WAIT_S = 45.0  # ...but not forever: then the mind decides (it raises a hand if still busy)
@@ -80,9 +80,16 @@ SPEAKING ("action")
 - Speak when someone addresses you (by name, or unmistakably, like a follow-up right after you spoke), when your
   hand is up and someone invites you, when you are asked to repeat or continue, and when a task event needs a short
   word from you (a draft is ready for approval, a ticket was created, something failed).
-- A question people ask each other or the room (not you by name) is never yours to answer directly: if nobody
-  answers and you have a confident answer, RAISE YOUR HAND. Same when someone states a wrong fact that matters for
-  a decision. At most one hand at a time.
+- A question people ask each other or the room (not you by name) is never yours to answer directly: RAISE YOUR
+  HAND instead. A raised hand is NOT an interruption: it is a quiet signal on your tile that people can take up or
+  ignore, so use it whenever you can add something useful:
+    * an open question hangs, or people are unsure ("I don't know", "maybe", "what do you think?");
+    * they are weighing a choice (which tool, which date, who should own it) and you can inform it, especially
+      with what you know about the company (metrics, decisions, owners, roadmap);
+    * someone states something wrong that matters, or contradicts a company decision.
+  Not to agree with or repeat what someone already answered. The "point" is what you would say when invited
+  (your contribution), not a description of the conversation. At most one hand at a time; lower it when the
+  moment has passed.
 - Stay silent when people talk to each other, small talk, thinking out loud, someone is mid-sentence or already
   answering, or you are unsure you were addressed. Interrupting is worse than missing a chance.
 - If told to stop, be quiet, or "that's enough": stay silent. Do not even acknowledge it.
@@ -135,6 +142,7 @@ PEOPLE AND EMAILS
 - Invites go to the people the meeting is for; the task list says who will receive it and whose email is missing.
   If it says "invite goes to: NOBODY" or an email is missing, do NOT offer to send: ask for the missing email.
 - Use task ids ("t1") in ops, approve and dismiss; never a calendar or ticket identifier.
+- A yes to a draft that already exists is an approval of THAT task id, never a new task.
 - When someone says an email aloud, put it in "contacts" ({{"name", "email"}}). Captions spell it out ("rahul mehta
   21 at example dot org" = rahulmehta21@example.org). Only then may you say you have it.
 
@@ -253,8 +261,10 @@ class Floor:
                 self._schedule(AFTER_SPEECH_S)
 
     async def _barge_in_if_sustained(self, speaker: str, since: float) -> None:
-        """Stop Adjourn only if the person is still talking BARGE_IN_HOLD_S later: real speech, not
-        a cough or a noisy-microphone blip (both of which cut it off mid-sentence before)."""
+        """Fallback when no caption words come: stop Adjourn only if the person has been "talking"
+        for BARGE_IN_HOLD_S. The usual barge-in is caption words that are not an echo
+        (on_caption). Speech indicators alone fire on a cough, room noise, or Adjourn's own voice
+        picked up by someone's microphone."""
         await asyncio.sleep(BARGE_IN_HOLD_S)
         if self.speaking and self.talking.get(speaker) == since:
             self._send({"type": "stop"})
@@ -273,9 +283,12 @@ class Floor:
             self._seen_speakers.add(who)
             log.info("caption speaker: %r", who)
         words = len(text.split())
-        if not self.has_speech_events and self.speaking and words >= BARGE_IN_WORDS and words > self._partial_words.get(who, 0):
-            self._send({"type": "stop"})  # fallback barge-in from captions
+        if self.speaking and words >= BARGE_IN_WORDS and words > self._partial_words.get(who, 0):
+            # Barge-in needs real words that are not Adjourn's own voice coming back through this
+            # person's microphone (speakers in the same room made it cut itself off).
+            self._send({"type": "stop"})
             self.speaking = False
+            log.info("barge-in by %s: %r", who, text[:60])
         self._partial_words[who] = 0 if final else words
         if who in self.talking:
             self.talking[who] = time.time()

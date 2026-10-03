@@ -94,8 +94,8 @@ def test_speech_events_drive_turn_taking(orch, monkeypatch):
         floor.on_speech("Kaleb", False)
         await until(lambda: "say" in kinds(page))
 
-        floor.on_speech("Sara", True)  # Sara talks over Adjourn...
-        await until(lambda: kinds(page)[-1] == "stop")  # ...and keeps talking: it stops
+        floor.on_caption("Sara", "wait, hold on a second", final=False)  # Sara talks over Adjourn
+        await until(lambda: kinds(page)[-1] == "stop")
         assert not floor.speaking
 
     run(body())
@@ -399,5 +399,19 @@ def test_no_hollow_sending_when_nobody_can_be_invited(orch):
         floor.apply(decision)
         assert decision["say"].startswith("I can't send it yet") and "Star Developer" in decision["say"]
         assert store.tasks["t1"].status == "needs_approval"
+
+    run(body())
+
+
+def test_its_own_voice_through_a_colleagues_mic_does_not_stop_it(orch, monkeypatch):
+    monkeypatch.setattr(floor_module, "BARGE_IN_HOLD_S", 0.3)
+
+    async def body():
+        floor, page = make_floor()
+        floor.apply({"action": "speak", "say": "Node fits our existing stack better for backend services."})
+        floor.on_speech("Jany Koulen", True)  # Jany's mic hears the room's speakers
+        floor.on_caption("Jany Koulen", "node fits our existing stack better", final=False)  # an echo
+        await asyncio.sleep(0.15)
+        assert floor.speaking and "stop" not in kinds(page)
 
     run(body())
