@@ -129,7 +129,7 @@ def _fake_save(plan_: dict) -> tuple[str, str]:
 
 def _require_key() -> None:
     if not settings.linear_api_key or not settings.gemini_api_key:
-        raise RuntimeError("LINEAR_MODE=live needs GEMINI_API_KEY and LINEAR_API_KEY in .env")
+        raise RuntimeError("Linear live mode needs GEMINI_API_KEY and LINEAR_API_KEY in .env")
 
 
 def _linear_tool(url: str, allowed: list[str] | None = None) -> dict:

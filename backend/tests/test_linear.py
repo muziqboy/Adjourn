@@ -90,3 +90,21 @@ def test_secrets_are_redacted():
         assert "abc" not in linear.redact("Authorization: Bearer abc.def")
     finally:
         settings.linear_api_key = ""
+
+
+def test_the_key_is_the_switch(monkeypatch):
+    from app.core.config import Settings
+
+    monkeypatch.setenv("AGENTS", "answer,issue,schedule")
+    monkeypatch.delenv("LINEAR_MODE", raising=False)
+
+    monkeypatch.setenv("LINEAR_API_KEY", "")
+    off = Settings()
+    assert "linear" not in off.agents and off.linear_mode == "mock"  # no key: nothing changes
+
+    monkeypatch.setenv("LINEAR_API_KEY", "not-a-real-key-123")
+    on = Settings()
+    assert on.agents == ["answer", "issue", "schedule", "linear"] and on.linear_mode == "live"
+
+    monkeypatch.setenv("LINEAR_MODE", "mock")
+    assert Settings().linear_mode == "mock"  # explicit override still wins
