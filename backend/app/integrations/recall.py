@@ -169,14 +169,19 @@ def parse_speech_event(payload: dict) -> tuple[str | None, bool] | None:
     return participant.get("name"), event.endswith("speech_on")  # no name: the bot itself
 
 
-def parse_presence_event(payload: dict) -> tuple[str | None, bool] | None:
-    """(participant name, joined?) from a participant_events.join / leave webhook."""
+def participant_of(payload: dict) -> dict:
+    """{name, email, is_host} of the participant a webhook is about (Meet often omits email)."""
+    data = payload.get("data") or {}
+    p = (data.get("data") or {}).get("participant") or data.get("participant") or {}
+    return {"name": p.get("name"), "email": p.get("email"), "is_host": bool(p.get("is_host"))}
+
+
+def parse_presence_event(payload: dict) -> tuple[dict, bool] | None:
+    """(participant, joined?) from a participant_events.join / leave webhook."""
     event = payload.get("event", "")
     if event not in ("participant_events.join", "participant_events.leave"):
         return None
-    data = payload.get("data") or {}
-    participant = (data.get("data") or {}).get("participant") or data.get("participant") or {}
-    return participant.get("name"), event.endswith(".join")
+    return participant_of(payload), event.endswith(".join")
 
 
 def bot_id_of(payload: dict) -> str | None:

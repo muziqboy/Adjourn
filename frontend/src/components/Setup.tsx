@@ -3,7 +3,7 @@
 // participant). Without one, the laptop microphone listens and the speakers talk.
 // Below the link: calendar auto-join, where the bot joins Meet events on the calendar by itself.
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { AutoJoinState, Health, MeetingContext, Person } from "../api/contract";
 
 interface Props {
@@ -20,14 +20,13 @@ export function Setup({ health, onStart, autojoin, onConnectCalendar }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // prefill from .env (ME_*, GUEST_*) unless the user has typed something
-  useEffect(() => {
-    if (!health) return;
-    setMe((m) => (m.name || m.email ? m : health.defaults.me));
-    setOthers((o) => (o.some((p) => p.name || p.email) ? o : health.defaults.others));
-  }, [health]);
-
-  const valid = me.name && me.email && others.every((p) => p.name && p.email);
+  // No prefilled names: with a Meet link, Adjourn learns who is in the call (the host is "you",
+  // the calendar invite gives emails). Names typed here are optional overrides.
+  const typed = (p: Person) => p.name.trim() || p.email.trim();
+  const complete = (p: Person) => p.name.trim() && p.email.trim();
+  const valid = meetUrl.trim()
+    ? [me, ...others].every((p) => !typed(p) || complete(p))
+    : complete(me) && others.every(complete);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!valid) return;
@@ -35,7 +34,8 @@ export function Setup({ health, onStart, autojoin, onConnectCalendar }: Props) {
     setError(null);
     try {
       const timezone = health?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
-      await onStart({ me, others, timezone }, meetUrl.trim());
+      const people = others.filter(typed);
+      await onStart({ me: typed(me) ? me : { name: "", email: "" }, others: people, timezone }, meetUrl.trim());
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -49,12 +49,12 @@ export function Setup({ health, onStart, autojoin, onConnectCalendar }: Props) {
       <p className="muted">Sits beside your call and does the follow-ups before you hang up.</p>
 
       <fieldset>
-        <legend>You</legend>
+        <legend>You {meetUrl && <span className="muted tiny">(optional: learned from the call)</span>}</legend>
         <PersonRow person={me} onChange={setMe} />
       </fieldset>
 
       <fieldset>
-        <legend>On the call</legend>
+        <legend>On the call {meetUrl && <span className="muted tiny">(optional)</span>}</legend>
         {others.map((p, i) => (
           <PersonRow
             key={i}

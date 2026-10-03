@@ -41,6 +41,29 @@ status: dict = {
 }
 
 _task: asyncio.Task | None = None
+_attendees: dict[str, list[dict]] = {}  # meeting_url -> [{name, email, self}] from the invite
+_bot_urls: dict[str, str] = {}  # bot id -> meeting_url
+
+
+def attendees_for(bot_id: str | None = None, meeting_url: str | None = None) -> list[dict]:
+    """The calendar invite's attendees for a call (by its bot or its link); [] if not a calendar
+    meeting. Gives Adjourn emails for the names Meet shows, and who "me" is."""
+    url = meeting_url or _bot_urls.get(bot_id or "", "")
+    return _attendees.get(url, [])
+
+
+def _remember(event: dict) -> None:
+    raw = event.get("raw") or {}
+    url = event.get("meeting_url") or ""
+    people = []
+    for a in raw.get("attendees") or []:
+        email = a.get("email") or ""
+        people.append({"name": a.get("displayName") or email.split("@")[0], "email": email, "self": bool(a.get("self"))})
+    if url and people:
+        _attendees[url] = people
+    for b in event.get("bots") or []:
+        if b.get("bot_id") and url:
+            _bot_urls[b["bot_id"]] = url
 
 
 # --- connecting the calendar ----------------------------------------------------------------
@@ -129,6 +152,7 @@ async def sync_once(store: Store, now: datetime | None = None) -> None:
     errors = []
     scheduled = []
     for event in meets:
+        _remember(event)
         if _bot_already_there(store, event):
             continue  # a bot was sent by hand to this call; a scheduled one would be a second Adjourn
         if not event.get("bots"):

@@ -18,6 +18,9 @@ settings.google_mode = "mock"
 settings.github_mode = "mock"
 settings.mock_delay = 0.02
 settings.intent_debounce = 0.05
+# the fixtures' people, whatever the developer's .env says
+settings.me_name, settings.me_email = "Alex", "demo-a@gmail.com"
+settings.guest_name, settings.guest_email = "Bea", "demo-b@gmail.com"
 TZ = settings.timezone
 
 

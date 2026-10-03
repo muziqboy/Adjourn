@@ -45,6 +45,9 @@ class Store:
         self.tasks: dict[str, Task] = {}
         self.usage = Usage()
         self.bot: dict = {"state": "none", "bot_id": None}
+        self.meeting_source = "none"  # setup (typed in) | call (learned from the bot) | defaults (.env)
+        self.attendee_emails: dict[str, str] = {}  # lowercased name -> email, from the calendar invite
+        self.owner_email: str | None = None  # the calendar's owner: "me" in calendar meetings
 
     # events
 
@@ -82,6 +85,7 @@ class Store:
     # meeting
 
     def start_meeting(self, meeting: MeetingContext) -> None:
+        self.meeting_source = "setup"  # callers that learn people from the call say "call" after
         meeting.started_at = meeting.started_at or datetime.now().astimezone().isoformat()
         self.meeting = meeting
         self.state = "live"
@@ -91,8 +95,65 @@ class Store:
         """Typed lines and replays work without the setup screen: use the .env defaults."""
         if self.state != "live" or self.meeting is None:
             self.start_meeting(default_meeting())
+            self.meeting_source = "defaults"
         assert self.meeting is not None
         return self.meeting
+
+    # --- who is in the call ---
+    # With a meeting bot, the call is the truth about who is present: nobody is hard-coded.
+    #   me      the meeting host (Recall marks it), or the calendar's owner for calendar meetings
+    #   others  everyone else who joins or speaks
+    #   emails  from the calendar invite's attendees (Meet does not share emails)
+    # The .env names are only a fallback for replays and typed lines without a call.
+
+    def ensure_call_meeting(self) -> MeetingContext:
+        """The meeting of a call the bot is in: starts with nobody and learns its people.
+        A meeting started from the setup screen (names typed in) is kept as is."""
+        if self.state != "live" or self.meeting is None or self.meeting_source == "defaults":
+            self.start_meeting(MeetingContext(me=Person(name="", email=""), others=[], timezone=settings.timezone))
+            self.meeting_source = "call"
+        return self.meeting
+
+    def add_participant(self, name: str | None, email: str | None = None, is_host: bool = False) -> None:
+        """Someone the bot saw in the call (join event or caption)."""
+        if not name:
+            return
+        meeting = self.ensure_meeting()
+        email = email or self.attendee_emails.get(name.lower(), "")
+        me = meeting.me
+        if me.name.lower() == name.lower() or (email and me.email and me.email.lower() == email.lower()):
+            if email and not me.email:
+                me.email = email
+            if not me.name:
+                me.name = name
+            return
+        if not me.name and (is_host or (email and email.lower() == (self.owner_email or "").lower())):
+            meeting.me = Person(name=name, email=email)  # the host is the person Adjourn works for
+            meeting.others = [p for p in meeting.others if p.name.lower() != name.lower()]
+        else:
+            known = next((p for p in meeting.others if p.name.lower() == name.lower()), None)
+            if known:
+                if email and not known.email:
+                    known.email = email
+                return
+            meeting.others.append(Person(name=name, email=email))
+        self.emit("meeting.state", {"state": self.state, "meeting": meeting.model_dump()})
+
+    def set_attendees(self, attendees: list[dict]) -> None:
+        """The calendar invite's attendees [{name, email, self}]: emails for the names Meet shows,
+        and "self" (the calendar's owner) is me."""
+        for a in attendees:
+            if a.get("name") and a.get("email"):
+                self.attendee_emails[a["name"].lower()] = a["email"]
+            if a.get("self") and a.get("email"):
+                self.owner_email = a["email"]
+        meeting = self.meeting
+        if meeting is None:
+            return
+        for person in [meeting.me, *meeting.others]:
+            if person.name and not person.email:
+                person.email = self.attendee_emails.get(person.name.lower(), "")
+        self.emit("meeting.state", {"state": self.state, "meeting": meeting.model_dump()})
 
     def end_meeting(self) -> None:
         self.state = "ended"

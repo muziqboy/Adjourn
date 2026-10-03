@@ -70,6 +70,8 @@ def build_router(store: Store, orch: Orchestrator, intent: IntentSession) -> API
     @router.post("/api/meeting/start")
     async def start_meeting(meeting: MeetingContext):
         store.start_meeting(meeting)
+        if not meeting.me.name.strip():
+            store.meeting_source = "call"  # no names typed in: learn them from the call
         return {"ok": True}
 
     @router.post("/api/meeting/stop")
@@ -136,7 +138,10 @@ def build_router(store: Store, orch: Orchestrator, intent: IntentSession) -> API
 
     @router.post("/api/bot/join")
     async def bot_join(body: Join):
-        store.ensure_meeting()
+        from ..listen import autojoin
+
+        store.ensure_call_meeting()  # people come from the call (and the calendar invite, if any)
+        store.set_attendees(autojoin.attendees_for(meeting_url=body.meeting_url))
         try:
             created = await bot.join(store, body.meeting_url, body.live_voice)
         except RuntimeError as exc:

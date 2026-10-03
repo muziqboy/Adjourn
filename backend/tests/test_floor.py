@@ -149,3 +149,26 @@ def test_a_noisy_microphone_does_not_block_and_presence_is_known(orch, monkeypat
         assert "Star Developer 6482 joined the call" in prompt
 
     run(body())
+
+
+def test_people_come_from_the_call_not_from_config(orch):
+    """With a bot, nobody is hard-coded: the host is me, others join, the invite gives emails."""
+    from app.listen import bot
+
+    async def body():
+        store.meeting_source = "defaults"  # the fixture's meeting stands in for "no names given"
+        store.set_attendees([{"name": "Jany Koulen", "email": "jany@example.com", "self": False},
+                             {"name": "Kaleb Girmay", "email": "kaleb@example.com", "self": True}])
+        def joined(name, is_host=False):
+            return {"event": "participant_events.join",
+                    "data": {"data": {"participant": {"name": name, "is_host": is_host}}}}
+        bot.handle_webhook(store, joined("Kaleb Girmay", is_host=True))
+        bot.handle_webhook(store, joined("Jany Koulen"))
+        bot.handle_webhook(store, joined("Star Developer 6482"))
+        meeting = store.meeting
+        assert (meeting.me.name, meeting.me.email) == ("Kaleb Girmay", "kaleb@example.com")
+        assert [(p.name, p.email) for p in meeting.others] == [("Jany Koulen", "jany@example.com"),
+                                                               ("Star Developer 6482", "")]
+        assert "Alex" not in str(meeting) and "Bea" not in str(meeting)  # the .env fallbacks
+
+    run(body())

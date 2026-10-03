@@ -111,7 +111,7 @@ def build_mcp(store: Store, orch: Orchestrator, intent: IntentSession) -> MCPSer
 
     @server.tool(description="Send the meeting bot into a Google Meet (needs Recall.ai configured).")
     async def send_bot(meeting_url: str) -> dict:
-        store.ensure_meeting()
+        store.ensure_call_meeting()
         created = await bot.join(store, meeting_url)
         return {"bot_id": created["id"], "state": store.bot["state"]}
 

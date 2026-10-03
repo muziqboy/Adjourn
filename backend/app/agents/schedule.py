@@ -107,7 +107,7 @@ async def verify(task: Task, art: Artifact, ctx: RunContext) -> list[str]:
 
 
 async def approve(task: Task, ctx: RunContext) -> tuple[Artifact, str]:
-    attendees = [p.email for p in ctx.meeting.others]
+    attendees = [p.email for p in ctx.meeting.others if p.email]  # Meet does not always share emails
     lock = ctx.orch.locks.setdefault(task.id, asyncio.Lock())
     async with lock:  # never invite while a revision is still moving the event
         await calendar.invite(ctx.external_id, attendees)

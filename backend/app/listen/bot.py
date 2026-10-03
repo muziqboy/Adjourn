@@ -107,8 +107,12 @@ def handle_webhook(store: Store, payload: dict) -> None:
 
     presence = recall.parse_presence_event(payload)
     if presence is not None:
+        who, joined = presence
+        store.ensure_call_meeting()
+        if joined:
+            store.add_participant(who["name"], who["email"], who["is_host"])
         if floor.current is not None:
-            floor.current.on_presence(*presence)
+            floor.current.on_presence(who["name"], joined)
         return
     speech = recall.parse_speech_event(payload)
     if speech is not None:
@@ -124,6 +128,10 @@ def handle_webhook(store: Store, payload: dict) -> None:
     event, text, speaker = parsed
     if store.bot.get("state") in ("joining", "waiting_room"):
         store.set_bot("in_call")  # captions only flow once the bot is in
+    who = recall.participant_of(payload)
+    if who["name"] and not (floor.current and floor.current.is_adjourn(who["name"])):
+        store.ensure_call_meeting()
+        store.add_participant(who["name"], who["email"], who["is_host"])
     if floor.current is not None and live_voice(store):
         floor.current.on_caption(speaker, text, final=event == "transcript.data")
         if floor.current.is_adjourn(speaker):
@@ -131,7 +139,7 @@ def handle_webhook(store: Store, payload: dict) -> None:
     if event == "transcript.partial_data":
         store.interim(text, speaker)
     else:
-        store.ensure_meeting()
+        store.ensure_call_meeting()
         store.add_line(text, speaker)
 
 
@@ -142,7 +150,10 @@ def _adopt(store: Store, bot_id: str) -> bool:
     if store.bot.get("bot_id") and store.bot.get("state") not in ("none", "left", "error"):
         return False
     log.info("adopting bot %s (scheduled from the calendar)", bot_id)
-    store.ensure_meeting()  # the panel leaves the setup screen
+    store.ensure_call_meeting()  # the panel leaves the setup screen; people come from the call
+    from . import autojoin
+
+    store.set_attendees(autojoin.attendees_for(bot_id=bot_id))
     store.set_bot("in_call", bot_id)  # it sends captions, so it is in the call
     _start_poller(store, bot_id)  # status changes and "left", like a bot sent by join()
     return True

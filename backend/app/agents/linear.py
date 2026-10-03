@@ -40,7 +40,9 @@ PLAN_SYSTEM = (
     "description (markdown, under 120 words: what was said on the call, then 2-3 '- [ ]' "
     "acceptance criteria; for an existing ticket keep its description unless asked; never "
     "invent numbers, dates or decisions), "
-    "assignee (the person's email exactly as written in the participants list, or null), "
+    "assignee (the email of the Linear user you found for that participant, or null; ONLY someone "
+    "who exists in Linear: if the person is not a Linear user, use null and say so in notes), "
+    "assignee_name (that participant's name exactly as written in the participants list, or null), "
     "notes (one short sentence on what you found in Linear)."
 )
 
@@ -59,6 +61,7 @@ class Plan(BaseModel):
     title: str
     description: str
     assignee: str | None = None
+    assignee_name: str | None = None  # the participant on the call this Linear user is
     notes: str = ""
 
 
@@ -71,8 +74,23 @@ def _participants(ctx: RunContext) -> list:
 
 
 def _name_of(email: str | None, ctx: RunContext) -> str:
-    person = next((p for p in _participants(ctx) if email and p.email.lower() == email.lower()), None)
-    return person.name if person else (email or "nobody")
+    person = next((p for p in _participants(ctx) if email and p.email and p.email.lower() == email.lower()), None)
+    if person:
+        return person.name
+    entry = _plans.get(ctx.task_id)
+    if entry and entry[1].assignee_name:
+        return entry[1].assignee_name
+    return email or "nobody"
+
+
+def _on_call(plan: "Plan", ctx: RunContext) -> bool:
+    """The assignee is someone on the call: by email when Meet shared it, else by name (the
+    participants list from the meeting bot usually has names only)."""
+    people = _participants(ctx)
+    if plan.assignee and any(p.email and p.email.lower() == plan.assignee.lower() for p in people):
+        return True
+    name = (plan.assignee_name or "").lower().strip()
+    return bool(name) and any(p.name.lower() == name or p.name.lower().split()[0] == name.split()[0] for p in people)
 
 
 def _trace_step(ctx: RunContext):
@@ -80,7 +98,7 @@ def _trace_step(ctx: RunContext):
 
 
 async def run(task: Task, ctx: RunContext) -> Artifact:
-    people = "\n".join(f"- {p.name} <{p.email}>" for p in _participants(ctx))
+    people = "\n".join(f"- {p.name}" + (f" <{p.email}>" if p.email else "") for p in _participants(ctx))
     named = re.search(TICKET_ID, task.brief)
     # A ticket this task already created wins; otherwise one named on the call ("give ADJ-3 to Bea").
     existing = ctx.external_id or (named.group(0) if named else None)
@@ -127,10 +145,8 @@ async def verify(task: Task, artifact: Artifact, ctx: RunContext) -> list[str]:
         problems.append("The plan has no description.")
     if plan is None or not plan.team:
         problems.append("No Linear team; set LINEAR_TEAM or let the agent find the team.")
-    emails = {p.email.lower() for p in _participants(ctx)}
-    for assignee in artifact.to:
-        if assignee.lower() not in emails:
-            problems.append(f"Assignee {assignee} is not on the call; assign someone on the call or nobody.")
+    if plan is not None and plan.assignee and not _on_call(plan, ctx):
+        problems.append(f"Assignee {plan.assignee_name or plan.assignee} is not on the call; assign someone on the call or nobody.")
     return problems
 
 
