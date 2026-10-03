@@ -1,12 +1,13 @@
-// Top bar of the live screen: listening dot (pulses with mic level), call clock, controls.
+// Top bar of the live screen: listening dot (pulses with mic level), call clock, the bot, and the
+// controls. Rare or destructive actions (bot leave, reset) sit in the ⋯ menu, away from "End".
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { BotState, MeetingState } from "../api/contract";
 
 const BOT_LABEL: Record<BotState["state"], string> = {
   none: "",
   joining: "Bot joining…",
-  waiting_room: "Bot in lobby: admit “Adjourn”",
+  waiting_room: "Admit “Adjourn” in Meet",
   in_call: "Bot in call",
   left: "Bot left",
   error: "Bot error",
@@ -36,13 +37,38 @@ export function Header(props: Props) {
       <span className={`dot ${live && hearing ? "on" : ""}`} style={{ transform: `scale(${1 + Math.min(props.level * 3, 0.8)})` }} />
       <span className="header-title">{title}</span>
       <span className="clock">{clock}</span>
-      <span className="spacer" />
       {props.bot.state !== "none" && <span className={`bot-chip ${props.bot.state}`}>{BOT_LABEL[props.bot.state]}</span>}
-      {botActive && <button className="small" onClick={props.onBotLeave}>Bot leave</button>}
+      <span className="spacer" />
       {live && !props.micOn && !botActive && <button className="small" onClick={props.onListen}>Mic on</button>}
       {live && <button className="small" onClick={props.onStop}>End</button>}
-      <button className="small ghost" onClick={props.onReset} title="Clear everything and go back to setup">Reset</button>
+      <Menu>
+        {botActive && <button onClick={props.onBotLeave}>Make the bot leave</button>}
+        <button
+          className="danger"
+          onClick={() => window.confirm("Clear the transcript and every card, and go back to setup?") && props.onReset()}
+        >
+          Reset everything
+        </button>
+      </Menu>
     </header>
+  );
+}
+
+/** A small ⋯ dropdown that closes on any click outside it or on one of its items. */
+function Menu({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+  return (
+    <div className="menu" ref={ref}>
+      <button className="small ghost" aria-label="More" aria-expanded={open} onClick={() => setOpen(!open)}>⋯</button>
+      {open && <div className="menu-items" onClick={() => setOpen(false)}>{children}</div>}
+    </div>
   );
 }
 

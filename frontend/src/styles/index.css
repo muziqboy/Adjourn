@@ -13,6 +13,7 @@
   --schedule: #1a73e8;
   --answer: #188038;
   --issue: #6e40c9;
+  --linear: #5e6ad2;
   --ok: #188038;
   --warn: #b06000;
   --bad: #c5221f;
@@ -34,6 +35,7 @@
     --schedule: #8ab4f8;
     --answer: #81c995;
     --issue: #c297ff;
+    --linear: #9ba3f5;
     --ok: #81c995;
     --warn: #fdd663;
     --bad: #f28b82;
@@ -45,6 +47,7 @@
 :root[data-theme="dark"] {
   --answer: #81c995;
   --issue: #c297ff;
+  --linear: #9ba3f5;
   --bg: #17181a;
   --surface: #222326;
   --text: #e8e8e6;
@@ -133,13 +136,30 @@ legend { font-weight: 600; margin-bottom: 6px; }
 .clock { color: var(--muted); font-variant-numeric: tabular-nums; }
 .warn { padding: 8px 16px; color: var(--warn); font-size: 13px; }
 
-.transcript { padding: 10px 16px; border-bottom: 1px solid var(--line); min-height: 64px; font-size: 13px; }
-.transcript p { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.transcript { padding: 10px 16px 6px; border-bottom: 1px solid var(--line); min-height: 64px; font-size: 13px; }
+.transcript:not(.full) p { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.transcript.full .transcript-lines { max-height: 40vh; overflow-y: auto; }
+.transcript-toggle { margin-top: 4px; }
 .transcript p + p { margin-top: 4px; }
 .interim { color: var(--muted); }
 
-.tasks { flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
-.empty { text-align: center; margin-top: 32px; }
+.tasks { flex: 1; overflow-y: auto; padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+.empty { text-align: center; margin: 32px 12px 0; }
+
+/* groups: needs you / working on it / done */
+.group-heading {
+  margin: 10px 0 -2px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted);
+}
+.group-heading.needs { color: var(--warn); }
+button.group-heading.fold { border: 0; background: none; padding: 0; align-self: flex-start; cursor: pointer; }
+.caret { font-size: 12px; }
+.slot[hidden] { display: none; }
+.slot.needs .card { box-shadow: 0 0 0 1px color-mix(in srgb, var(--warn) 60%, transparent), 0 2px 8px rgb(0 0 0 / 0.08); }
+.slot.working .card { background: transparent; }
+.slot.working .card h2 { font-size: 14px; }
+.slot.done .card { padding: 8px 12px; }
+.slot.done .card .facts, .slot.done .card .links-row { font-size: 12px; }
 
 .card {
   background: var(--surface);
@@ -155,9 +175,12 @@ legend { font-weight: 600; margin-bottom: 6px; }
 .card.type-schedule { border-left-color: var(--schedule); }
 .card.type-answer { border-left-color: var(--answer); }
 .card.type-issue { border-left-color: var(--issue); }
+.card.type-linear { border-left-color: var(--linear); }
 .card.dismissed { opacity: 0.5; }
 .card.dismissed h2 { text-decoration: line-through; }
-.card.flash { background: var(--flash); transition: none; }
+.card.flash { background: var(--flash) !important; transition: none; }
+.card.pinged { animation: ping 1.2s ease-out; }
+@keyframes ping { 0%, 40% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: 0 0 0 0 transparent; } }
 @keyframes appear { from { opacity: 0; transform: translateY(-6px); } }
 
 .card-top { display: flex; align-items: center; gap: 6px; font-size: 12px; }
@@ -177,7 +200,39 @@ legend { font-weight: 600; margin-bottom: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .facts { font-size: 13px; overflow-wrap: anywhere; }
-.waiting { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.live { font-size: 12px; color: var(--muted); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.changed { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+/* the task's edges: "Uses" (depends_on) and "Feeds" (its dependants) */
+.links-row { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; font-size: 12px; }
+.graph { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.graph-label { color: var(--muted); font-size: 11px; width: 38px; }
+.chip {
+  font-size: 12px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--code); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block;
+}
+.chip-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); margin-right: 5px; vertical-align: 1px; }
+.chip.needs_approval .chip-dot { background: var(--warn); }
+.chip.done .chip-dot { background: var(--ok); }
+.chip.failed .chip-dot { background: var(--bad); }
+.chip.running .chip-dot, .chip.verifying .chip-dot, .chip.detected .chip-dot { background: var(--accent); }
+.chip.dismissed { text-decoration: line-through; opacity: 0.6; }
+
+/* the card's "Change…" box */
+.steer { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.steer input { flex: 1 1 160px; padding: 5px 8px; font-size: 13px; }
+.steer .review { flex-basis: 100%; }
+
+/* header ⋯ menu */
+.menu { position: relative; }
+.menu-items {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 10; min-width: 190px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 4px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.18); display: flex; flex-direction: column;
+}
+.menu-items button { border: 0; background: none; justify-content: flex-start; padding: 7px 10px; font-size: 13px; }
+.menu-items button:hover { background: var(--code); }
+.menu-items button.danger { color: var(--bad); }
 .review { font-size: 12px; color: var(--bad); margin-top: 4px; }
 
 .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
@@ -201,7 +256,7 @@ legend { font-weight: 600; margin-bottom: 6px; }
 .footer { border-top: 1px solid var(--line); padding: 10px 16px; background: var(--surface); display: flex; flex-direction: column; gap: 6px; }
 .say { display: flex; gap: 6px; }
 .say input { flex: 1; }
-.footer-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.footer-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 
 /* meeting bot */
 .speaker { font-weight: 600; }

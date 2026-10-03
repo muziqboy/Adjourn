@@ -124,7 +124,9 @@ SCHEDULING
 - Propose meeting times from "When everyone in the call is free" below (it already combines their calendars,
   working hours, lunch and no-meeting Friday afternoons). Pick the earliest window that fits what they asked
   ("later in the week" = Wednesday to Friday). Say whose calendar ruled out an obvious time if it helps.
-- A proposal is a question: add no schedule task until someone agrees to that time.
+- A proposal is a question: add no schedule task until someone agrees to that time. Then book EXACTLY the
+  agreed day, date and time (the one in the conversation), never a different date of your own. If the agreed
+  time clashes with someone's calendar, say so and propose the nearest free time instead of booking silently.
 
 PEOPLE AND EMAILS
 - Captions garble names too: match them to the people in the call ("Johnny" may be Jany, "Kaylub" may be Kaleb). Do not invent people.
@@ -400,7 +402,17 @@ class Floor:
         start = self.lines[0][0] if self.lines else now
         people = self._people()
         names = {p.name for p in people} | self.present
-        roster = "\n".join(f"- {p.name}" + (f" <{p.email}>" if p.email else "") for p in people) or "- (unknown yet)"
+        from ..core import company
+
+        me = self.store.meeting.me.name if self.store.meeting else ""
+
+        def entry(p) -> str:
+            email = p.email or company.email_for(p.name) or ""
+            role = (company.find(p.name) or {}).get("role", "")
+            tag = " (the organiser: you work for them; needs no invite)" if p.name == me else ""
+            return f"- {p.name}" + (f" <{email}>" if email else " (no email known)") + (f", {role}" if role else "") + tag
+
+        roster = "\n".join(entry(p) for p in people) or "- (unknown yet)"
         extra = sorted(n for n in self.present if n not in {p.name for p in people})
         if extra:
             roster += "\n" + "\n".join(f"- {n}" for n in extra)
@@ -592,7 +604,12 @@ def spoken_times(text: str) -> str:
         suffix = "am" if hour < 12 else "pm"
         hour12 = hour % 12 or 12
         return f"{hour12} {suffix}" if minute == 0 else f"{hour12}:{minute:02d} {suffix}"
-    return re.sub(r"\b(\d{1,2}):(\d{2})\b(?!\s*(?:am|pm|a\.m\.|p\.m\.))", say, text)
+    text = re.sub(r"\b(\d{1,2}):(\d{2})\b(?!\s*(?:am|pm|a\.m\.|p\.m\.))", say, text)
+    words = {"thirteen": 1, "fourteen": 2, "fifteen": 3, "sixteen": 4, "seventeen": 5, "eighteen": 6,
+             "nineteen": 7, "twenty": 8, "twenty-one": 9, "twenty-two": 10, "twenty-three": 11}
+    return re.sub(r"\b(twenty-three|twenty-two|twenty-one|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|"
+                  r"nineteen|twenty) hundred( hours)?\b|\b(thirteen|fourteen|fifteen|sixteen|seventeen|eighteen) (?:hours|o'clock)\b",
+                  lambda m: f"{words[(m.group(1) or m.group(3)).lower()]} pm", text, flags=re.I)
 
 
 class _Ctx:

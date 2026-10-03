@@ -1,5 +1,5 @@
 // The panel: a ~400 px window beside the Meet call. Setup screen until listening starts,
-// then the live screen: header, transcript, task cards, footer.
+// then the live screen: header, transcript, the task list (needs you / working / done), footer.
 //
 // Layout of src/:
 //   api/         contract (mirror of the backend) and the socket hook
@@ -16,15 +16,22 @@ import { Footer } from "./components/Footer";
 import { Header } from "./components/Header";
 import { Setup } from "./components/Setup";
 import { TaskCard } from "./components/TaskCard";
+import { needsYou, TaskList } from "./components/TaskList";
 import { Transcript } from "./components/Transcript";
 
 export default function App() {
-  const { view, start, stop, say, replay, approve, dismiss, reset, sendBot, botLeave, connectCalendar } = useMeeting();
+  const { view, start, stop, say, replay, approve, dismiss, steer, reset, sendBot, botLeave, connectCalendar } = useMeeting();
   const [health, setHealth] = useState<Health | null>(null);
   const [level, setLevel] = useState(0);
   const [micOn, setMicOn] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
   const capture = useRef<Capture | null>(null);
+
+  // "(2) Adjourn" in the tab: cards waiting for a click are visible even behind the Meet window
+  const waiting = needsYou(view.tasks);
+  useEffect(() => {
+    document.title = waiting ? `(${waiting}) Adjourn` : "Adjourn";
+  }, [waiting]);
 
   useEffect(() => {
     fetch("/api/health").then((r) => r.json()).then(setHealth).catch(() => setHealth(null));
@@ -83,11 +90,10 @@ export default function App() {
       />
       {micError && <p className="warn">{micError}</p>}
       <Transcript lines={view.lines} interim={view.interim} />
-      <main className="tasks">
-        {view.tasks.length === 0 && <p className="muted empty">When someone asks or commits to something, it shows up here.</p>}
-        {view.tasks.map((task) => (
+      <TaskList
+        tasks={view.tasks}
+        card={(task, reveal) => (
           <TaskCard
-            key={task.id}
             task={task}
             tasks={view.tasks}
             info={view.agents[task.type]}
@@ -95,9 +101,11 @@ export default function App() {
             botInCall={view.bot.state === "in_call"}
             onApprove={() => approve(task.id)}
             onDismiss={() => dismiss(task.id)}
+            onSteer={(instruction) => steer(task.id, instruction)}
+            onReveal={reveal}
           />
-        ))}
-      </main>
+        )}
+      />
       <Footer onSay={say} onReplay={replay} modes={view.modes} usage={view.usage} />
     </div>
   );

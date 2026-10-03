@@ -61,7 +61,7 @@ is the acceptance test for everything here.
       api/               contract.ts (mirror of core/contract.py), useMeeting.ts (socket + actions)
       audio/             capture.ts (ears), speak.ts (voice)
       agents/index.tsx   card faces per task type
-      components/        Setup, Header, Transcript, TaskCard, Footer
+      components/        Setup, Header, Transcript, TaskList (needs you / working / done), TaskCard, Footer
 
 ## Ownership boundaries
 
