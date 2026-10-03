@@ -21,6 +21,8 @@ export interface CardFace {
   waiting?: string;
   /** Status shown once done, if "Done" is not the right word (e.g. "Spoken"). */
   doneLabel?: string;
+  /** Placeholder of the card's "Change…" box: an example correction for this type. */
+  steerHint?: string;
 }
 
 const firstLine = (text: string | null | undefined) =>
@@ -53,6 +55,7 @@ const DEFAULT: CardFace = {
 
 const FACES: Record<string, CardFace> = {
   answer: {
+    steerHint: "e.g. shorter, or mention the cost",
     facts: (t) => firstLine(t.artifact?.content),
     details: (t) => <Pre>{t.artifact?.content ?? ""}</Pre>,
     links: sourceChips,
@@ -62,6 +65,7 @@ const FACES: Record<string, CardFace> = {
     doneLabel: "Spoken",
   },
   issue: {
+    steerHint: "e.g. add the p95 numbers",
     facts: (t) => {
       const a = t.artifact!;
       return a.external_id ? `#${a.external_id} · ${a.title}` : `Draft · ${a.title}`;
@@ -70,6 +74,7 @@ const FACES: Record<string, CardFace> = {
     links: openLink("Open on GitHub"),
   },
   linear: {
+    steerHint: "e.g. assign it to Sam",
     facts: (t, people) => {
       const a = t.artifact!;
       const who = a.to.length ? people.find((p) => p.email === a.to[0])?.name ?? a.to[0] : "unassigned";
@@ -79,6 +84,7 @@ const FACES: Record<string, CardFace> = {
     links: openLink("Open in Linear"),
   },
   schedule: {
+    steerHint: "e.g. Friday at 3, or make it 45 minutes",
     facts: (t) => {
       const a = t.artifact!;
       if (!a.start || !a.end) return "";
@@ -89,6 +95,7 @@ const FACES: Record<string, CardFace> = {
     links: openLink("Open in Calendar"),
   },
   email: {
+    steerHint: "e.g. add the deadline",
     facts: (t, people) => {
       const a = t.artifact!;
       const names = a.to.map((e) => people.find((p) => p.email.toLowerCase() === e.toLowerCase())?.name ?? e);
@@ -102,6 +109,7 @@ const FACES: Record<string, CardFace> = {
       ) : null,
   },
   research: {
+    steerHint: "e.g. focus on pricing",
     facts: (t) => firstLine(t.artifact?.content),
     details: (t) => <Pre>{t.artifact?.content ?? ""}</Pre>,
     links: sourceChips,

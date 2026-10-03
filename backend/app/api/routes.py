@@ -9,6 +9,7 @@ session and returns. See docs/ARCHITECTURE.md for the full list with payloads.
     POST /api/transcript           {text}: typed speech, same path as audio from here on
     POST /api/replay?name=&speed=  play fixtures/<name>.jsonl through the real pipeline
     POST /api/tasks/{id}/approve   the card's click (invite, speak, create issue)
+    POST /api/tasks/{id}/steer     {instruction}: the card's "Change…" box, e.g. "make it Friday"
     POST /api/tasks/{id}/dismiss   the card was wrong
     POST /api/reset                forget everything (and every mock object)
     POST /api/bot/join             {meeting_url}: send the Recall bot into the Meet
@@ -28,7 +29,7 @@ from pydantic import BaseModel
 
 from .. import integrations
 from ..core.config import FIXTURES, settings
-from ..core.contract import MeetingContext
+from ..core.contract import MeetingContext, Op
 from ..core.intent import IntentSession
 from ..core.orchestrator import Orchestrator
 from ..core.store import Store
@@ -37,6 +38,10 @@ from ..listen import audio, autojoin, bot
 
 class Line(BaseModel):
     text: str
+
+
+class Steer(BaseModel):
+    instruction: str
 
 
 class Join(BaseModel):
@@ -114,6 +119,23 @@ def build_router(store: Store, orch: Orchestrator, intent: IntentSession) -> API
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
         return task.model_dump()
+
+    @router.post("/api/tasks/{task_id}/steer")
+    async def steer(task_id: str, body: Steer):
+        # The same door as a correction said on the call: an update op, so the task reruns
+        # against its existing event / issue and its dependants follow. The brief must stay
+        # complete (agents never see the old one), so the correction is appended, not swapped in.
+        task = store.tasks.get(task_id)
+        if task is None:
+            raise HTTPException(404, "no such task")
+        instruction = body.instruction.strip()
+        if not instruction:
+            raise HTTPException(422, "say what to change")
+        if task.status == "dismissed":
+            raise HTTPException(409, "the task was dismissed")
+        brief = f"{task.brief}\n\nCorrection from the panel (it overrides the above): {instruction}"
+        orch.apply([Op(op="update", id=task_id, brief=brief, reason=f"Changed on the panel: {instruction}")])
+        return store.tasks[task_id].model_dump()
 
     @router.post("/api/tasks/{task_id}/dismiss")
     async def dismiss(task_id: str):

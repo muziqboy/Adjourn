@@ -124,14 +124,17 @@ SCHEDULING
 - Propose meeting times from "When everyone in the call is free" below (it already combines their calendars,
   working hours, lunch and no-meeting Friday afternoons). Pick the earliest window that fits what they asked
   ("later in the week" = Wednesday to Friday). Say whose calendar ruled out an obvious time if it helps.
-- A proposal is a question: add no schedule task until someone agrees to that time.
+- A proposal is a question: add no schedule task until someone agrees to that time. Then book EXACTLY the
+  agreed day, date and time (the one in the conversation), never a different date of your own. If the agreed
+  time clashes with someone's calendar, say so and propose the nearest free time instead of booking silently.
 
 PEOPLE AND EMAILS
 - Captions garble names too: match them to the people in the call ("Johnny" may be Jany, "Kaylub" may be Kaleb). Do not invent people.
 - Use emails exactly as the participants list shows them. If someone has no email listed, write their name only:
   NEVER invent or guess an email (no "name@example.com").
 - Invites go to the people the meeting is for; the task list says who will receive it and whose email is missing.
-  If an email is missing, ask for it before sending.
+  If it says "invite goes to: NOBODY" or an email is missing, do NOT offer to send: ask for the missing email.
+- Use task ids ("t1") in ops, approve and dismiss; never a calendar or ticket identifier.
 - When someone says an email aloud, put it in "contacts" ({{"name", "email"}}). Captions spell it out ("rahul mehta
   21 at example dot org" = rahulmehta21@example.org). Only then may you say you have it.
 
@@ -357,8 +360,10 @@ class Floor:
         out = f"{task.id} {task.type} “{art.title if art and art.title else task.title}”"
         if art and art.to:
             out += " -> " + ", ".join(self._name_for(e) for e in art.to)
-        if art and art.external_id:
+        if art and art.external_id and art.kind == "issue":
             out += f" (CREATED as {art.external_id})"
+        elif art and art.kind == "event" and art.start:
+            out += f" ({datetime.fromisoformat(art.start):%a %d %b %H:%M}, {'invite sent' if art.delivered else 'hold only'})"
         return out
 
     def _describe(self, task: Task) -> str:
@@ -397,7 +402,17 @@ class Floor:
         start = self.lines[0][0] if self.lines else now
         people = self._people()
         names = {p.name for p in people} | self.present
-        roster = "\n".join(f"- {p.name}" + (f" <{p.email}>" if p.email else "") for p in people) or "- (unknown yet)"
+        from ..core import company
+
+        me = self.store.meeting.me.name if self.store.meeting else ""
+
+        def entry(p) -> str:
+            email = p.email or company.email_for(p.name) or ""
+            role = (company.find(p.name) or {}).get("role", "")
+            tag = " (the organiser: you work for them; needs no invite)" if p.name == me else ""
+            return f"- {p.name}" + (f" <{email}>" if email else " (no email known)") + (f", {role}" if role else "") + tag
+
+        roster = "\n".join(entry(p) for p in people) or "- (unknown yet)"
         extra = sorted(n for n in self.present if n not in {p.name for p in people})
         if extra:
             roster += "\n" + "\n".join(f"- {n}" for n in extra)
@@ -468,7 +483,11 @@ class Floor:
             self._event(f"Still WAITING FOR APPROVAL (voice OK): {self._describe_short(task)}")
 
     def apply(self, decision: dict) -> None:
-        self._apply_work(decision)
+        refusal = self._apply_work(decision)
+        if refusal and decision["action"] == "speak":
+            decision["say"] = refusal  # never "sending it now" when it cannot be sent
+        if decision.get("say"):
+            decision["say"] = spoken_times(decision["say"])
         action = decision["action"]
         if action == "speak" and decision.get("say"):
             self.hand = None
@@ -485,10 +504,12 @@ class Floor:
             self.hand = None
             self._send({"type": "hand", "up": False})
 
-    def _apply_work(self, decision: dict) -> None:
-        """Task ops, voice approvals and dismissals, through the orchestrator's own doors."""
+    def _apply_work(self, decision: dict) -> str | None:
+        """Task ops, voice approvals and dismissals, through the orchestrator's own doors.
+        Returns what to say instead when an approval cannot go ahead."""
+        refusal = None
         if self.orch is None:
-            return
+            return None
         ops = []
         for raw in decision.get("tasks") or []:
             try:
@@ -514,12 +535,30 @@ class Floor:
                 log.info("floor: approval of %s refused (%s)", task_id, task.status if task else "unknown task")
                 self._event(f"Could not approve {task_id}: it is {task.status if task else 'unknown'}.", decide=False)
                 continue
+            if task.type == "schedule" and self.store.meeting is not None:
+                from ..agents.schedule import invitees
+
+                emails, missing = invitees(task, _Ctx(self.store.meeting))
+                if not emails:
+                    who = ", ".join(missing) or "the people you want to invite"
+                    refusal = f"I can't send it yet: I don't have an email for {who}. What's the address?"
+                    self._event(f"Invite NOT sent for {task_id}: no email for {who}.", decide=False)
+                    continue
             self.store.trace(task_id, "info", "Approved by voice in the meeting")
-            self._run(self.orch.approve(task_id), f"voice approval of {task_id}")
+            self._run(self._approve(task_id), f"voice approval of {task_id}")
         for task_id in decision.get("dismiss") or []:
             task = self.store.tasks.get(task_id)
             if task and task.status not in ("done", "dismissed"):
                 self.orch.dismiss(task_id)
+        return refusal
+
+    async def _approve(self, task_id: str) -> None:
+        """Run an approval; if it fails, the room hears why (it said "sending" a moment ago)."""
+        try:
+            await self.orch.approve(task_id)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("voice approval of %s failed: %s", task_id, exc)
+            self._event(f"FAILED to carry out {task_id}: {str(exc)[:200]} Tell the room plainly.")
 
     def _run(self, coro, label: str) -> None:
         async def guarded():
@@ -553,6 +592,24 @@ class Floor:
         self.talking.clear()
         self.present.clear()
         self._task_status.clear()
+
+
+def spoken_times(text: str) -> str:
+    """'13:00' -> '1 pm', '9:30' -> '9:30 am', '16:00' -> '4 pm': the voice says digits literally
+    ("thirteen hundred"), and the model slips into 24-hour times despite the prompt."""
+    def say(m: re.Match) -> str:
+        hour, minute = int(m.group(1)), int(m.group(2))
+        if hour > 23 or minute > 59:
+            return m.group(0)
+        suffix = "am" if hour < 12 else "pm"
+        hour12 = hour % 12 or 12
+        return f"{hour12} {suffix}" if minute == 0 else f"{hour12}:{minute:02d} {suffix}"
+    text = re.sub(r"\b(\d{1,2}):(\d{2})\b(?!\s*(?:am|pm|a\.m\.|p\.m\.))", say, text)
+    words = {"thirteen": 1, "fourteen": 2, "fifteen": 3, "sixteen": 4, "seventeen": 5, "eighteen": 6,
+             "nineteen": 7, "twenty": 8, "twenty-one": 9, "twenty-two": 10, "twenty-three": 11}
+    return re.sub(r"\b(twenty-three|twenty-two|twenty-one|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|"
+                  r"nineteen|twenty) hundred( hours)?\b|\b(thirteen|fourteen|fifteen|sixteen|seventeen|eighteen) (?:hours|o'clock)\b",
+                  lambda m: f"{words[(m.group(1) or m.group(3)).lower()]} pm", text, flags=re.I)
 
 
 class _Ctx:

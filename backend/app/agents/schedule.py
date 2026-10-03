@@ -132,16 +132,35 @@ def _team_busy(task: Task, ctx: RunContext, start: datetime, end: datetime) -> l
 
 
 def invitees(task: Task, ctx: RunContext) -> tuple[list[str], list[str]]:
-    """(emails to invite, names without an email). The people the brief names, or everyone else
-    in the call if it names nobody; plus any email written in the brief. Never the organiser."""
-    brief = task.brief.lower()
-    me = ctx.meeting.me.email.lower()
-    named = [p for p in ctx.meeting.others if p.name and p.name.split()[0].lower() in brief]
-    people = named or list(ctx.meeting.others)
-    emails = [p.email for p in people if p.email]
-    emails += [e for e in re.findall(r"[\w.+-]+@[\w-]+\.[\w.]+", task.brief) if e.lower() not in {x.lower() for x in emails}]
-    emails = [e for e in emails if e.lower() != me]
-    missing = [p.name for p in people if not p.email]
+    """(emails to invite, names without an email), never the organiser.
+
+    Who: the people the brief names, found among the people in the call or in the company
+    directory (names, first names, aliases), so a restart that forgot who is in the call cannot
+    lose them; if the brief names nobody, everyone else in the call. Plus any email written in
+    the brief."""
+    from ..core import company
+
+    written = re.findall(r"[\w.+-]+@[\w-]+\.[\w.]+", task.brief)
+    brief = re.sub(r"[\w.+-]+@[\w-]+\.[\w.]+", " ", task.brief).lower()  # names inside emails do not count
+    everyone = re.search(r"\b(everyone|everybody|all of us|the whole team|the team|the (two|three|four) of us)\b", brief)
+    me = ctx.meeting.me
+    is_me = lambda name: bool(name) and me.name and name.split()[0].lower() == me.name.split()[0].lower()  # noqa: E731
+    named: dict[str, str] = {}  # name -> email ("" if unknown)
+    for p in ctx.meeting.others:
+        if p.name and p.name.split()[0].lower() in brief and not is_me(p.name):
+            named[p.name] = p.email or company.email_for(p.name) or ""
+    for person in company.people():
+        names = [person["name"], person["name"].split()[0], *person.get("aliases", [])]
+        if any(re.search(rf"\b{re.escape(n.lower())}\b", brief) for n in names if n) and not is_me(person["name"]):
+            named.setdefault(person["name"], person.get("email", ""))
+    if everyone or not named:
+        for p in ctx.meeting.others:
+            if p.name and not is_me(p.name):
+                named.setdefault(p.name, p.email or company.email_for(p.name) or "")
+    emails = [e for e in named.values() if e]
+    emails += [e for e in written if e.lower() not in {x.lower() for x in emails}]
+    emails = [e for e in emails if e.lower() != (me.email or "").lower()]
+    missing = [name for name, email in named.items() if not email]
     return emails, missing
 
 

@@ -24,14 +24,14 @@ export function Footer({ onSay, onReplay, modes, usage }: Props) {
   return (
     <footer className="footer">
       <form onSubmit={submit} className="say">
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Type what was said…" />
+        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Type what was said, as if spoken in the call…" />
         <button className="small">Say</button>
       </form>
       <div className="footer-row">
         <button className="link" onClick={() => void onReplay()}>Replay demo</button>
         <span className="spacer" />
-        <span className="muted tiny" title="model · Google · GitHub modes">
-          {modes.llm} · {modes.google} · {modes.github} · {usage.calls} calls · {tokens}k tok
+        <span className="muted tiny" title={`Modes: model ${modes.llm} · Google ${modes.google} · GitHub ${modes.github}`}>
+          {usage.calls} model calls · {tokens}k tokens
         </span>
       </div>
     </footer>
