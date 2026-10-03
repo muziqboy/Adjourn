@@ -35,6 +35,8 @@ async def generate(
     search: bool = False,
     mock: Callable[[], LLMResult],
     mock_delay: float = 0.5,
+    model: str | None = None,  # override MODEL_FAST for this call
+    thinking: str | None = None,  # thinking level, e.g. "minimal" for latency-critical calls
 ) -> LLMResult:
     if settings.llm_mode == "mock":
         await asyncio.sleep(mock_delay * settings.mock_delay)
@@ -49,6 +51,7 @@ async def generate(
     else:
         from . import gemini
 
-        result, tokens_in, tokens_out = await gemini.generate(contents, system=system, schema=schema, search=search)
+        result, tokens_in, tokens_out = await gemini.generate(
+            contents, system=system, schema=schema, search=search, model=model, thinking=thinking)
     store.add_usage(tokens_in, tokens_out)
     return result

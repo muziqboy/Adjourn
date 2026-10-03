@@ -39,6 +39,13 @@ CASES = [
 
 
 async def main() -> None:
+    import app.listen.floor as floor_module
+
+    if len(sys.argv) > 1:
+        floor_module.FLOOR_MODEL = sys.argv[1] if sys.argv[1] != "-" else None
+    if len(sys.argv) > 2:
+        floor_module.FLOOR_THINKING = sys.argv[2]
+    print("model:", floor_module.FLOOR_MODEL or "default", "| thinking:", floor_module.FLOOR_THINKING or "default")
     passed = 0
     for name, expected, lines, hand in CASES:
         floor = Floor(store)

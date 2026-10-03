@@ -79,3 +79,39 @@ def test_unreadable_model_output_means_silent():
     assert _parse("I think I should speak")["action"] == "silent"
     assert _parse('```json\n{"action": "speak", "say": "Hi."}\n```')["say"] == "Hi."
     assert _parse('{"action": "dance"}')["action"] == "silent"
+
+
+def test_speech_events_drive_turn_taking(orch, monkeypatch):
+    monkeypatch.setattr(floor_module, "AFTER_SPEECH_S", 0.05)
+
+    async def body():
+        floor, page = make_floor()
+        floor.on_speech("Kaleb", True)
+        floor.on_caption("Kaleb", "Adjourn, would a CDN help?", final=True)
+        await asyncio.sleep(0.3)
+        assert page.sent == []  # Kaleb is still talking: no decision yet
+        floor.on_speech("Kaleb", False)
+        await until(lambda: "say" in kinds(page))
+
+        floor.on_speech("Sara", True)  # Sara talks over Adjourn
+        assert not floor.speaking
+        await until(lambda: kinds(page)[-1] == "stop")
+
+    run(body())
+
+
+def test_own_voice_by_name_or_echo_is_never_a_question(orch, monkeypatch):
+    monkeypatch.setattr(floor_module, "AFTER_SPEECH_S", 0.05)
+
+    async def body():
+        floor, page = make_floor()
+        floor.apply({"action": "speak", "say": "Redis helps if many searches repeat."})
+        floor.spoken()
+        floor.on_speech("Adjourn", True)  # its own speech events are ignored
+        assert not floor.talking
+        floor.on_caption("Kaleb Girmay", "Redis helps if many searches repeat.", final=True)  # echo, misattributed
+        floor.on_caption("Adjourn (bot)", "Adjourn would you", final=True)
+        await asyncio.sleep(0.3)
+        assert kinds(page).count("say") == 1 and floor.new_since_decision == 0
+
+    run(body())

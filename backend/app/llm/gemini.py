@@ -17,13 +17,16 @@ def client():
     return _client
 
 
-async def generate(contents: Any, *, system: str | None, schema: type | None, search: bool):
+async def generate(contents: Any, *, system: str | None, schema: type | None, search: bool,
+                   model: str | None = None, thinking: str | None = None):
     """Returns (LLMResult, tokens_in, tokens_out)."""
     from google.genai import types
 
     from . import LLMResult
 
     config = types.GenerateContentConfig(system_instruction=system)
+    if thinking:
+        config.thinking_config = types.ThinkingConfig(thinking_level=thinking)
     if search:
         config.tools = [types.Tool(google_search=types.GoogleSearch())]
     if schema is not None:
@@ -31,7 +34,7 @@ async def generate(contents: Any, *, system: str | None, schema: type | None, se
         config.response_schema = schema
 
     response = await client().aio.models.generate_content(
-        model=settings.model_fast, contents=contents, config=config
+        model=model or settings.model_fast, contents=contents, config=config
     )
 
     usage = response.usage_metadata

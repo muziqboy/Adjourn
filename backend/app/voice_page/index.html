@@ -143,6 +143,35 @@ const levels = new Uint8Array(analyser.frequencyBinCount);
   requestAnimationFrame(draw);
 })();
 
+// ---- the take gate: the first moments of each line wait for its transcript --------------
+// If the voice starts talking ABOUT the line ("The user wants me to read...") instead of saying
+// it, the take is dropped unheard and the line is sent again once.
+const META = /^\W*(the user|user wants|i (must|will|should|need to|am going to)|okay,? (so|i)|let me|here is|reading|word for word|as adjourn)/i;
+const GATE_MS = 600;
+let gate = null;  // {chunks, timer, text, retried}
+function openGate() {
+  if (!gate || gate.open) return;
+  clearTimeout(gate.timer); gate.open = true;
+  gate.chunks.forEach(play); gate.chunks = [];
+}
+function gatedAudio(b64) {
+  if (!gate) return play(b64);
+  if (gate.open) return play(b64);
+  gate.chunks.push(b64);
+  if (!gate.timer) gate.timer = setTimeout(openGate, GATE_MS);
+}
+function gatedText(text) {
+  if (!gate || gate.open) return;
+  gate.heard = (gate.heard || "") + text;
+  if (META.test(gate.heard)) {
+    log(`voice narrated instead of speaking, ${gate.retried ? "dropped" : "retrying"}: ${gate.heard.slice(0, 80)}`);
+    clearTimeout(gate.timer);
+    const retry = !gate.retried, line_text = gate.text;
+    gate = null; line += 1;
+    if (retry) say(line_text, true); else { playingLine = 0; send({ type: "spoken" }); idle(); }
+  } else if (gate.heard.trim().split(/\s+/).length >= 4) openGate();
+}
+
 // ---- Gemini Live as a voice: text in, speech out ----
 let session = null, said = "";
 async function connectVoice() {
@@ -157,9 +186,9 @@ async function connectVoice() {
         const sc = m.serverContent;
         if (!sc) return;
         if (playingLine !== line) return;  // a stopped line's leftover audio
-        for (const part of sc.modelTurn?.parts ?? []) if (part.inlineData?.data) play(part.inlineData.data);
-        if (sc.outputTranscription?.text) said += sc.outputTranscription.text;
-        if (sc.turnComplete) { turnDone = true; log(`spoke: ${said}`); said = ""; maybeDone(); }
+        for (const part of sc.modelTurn?.parts ?? []) if (part.inlineData?.data) gatedAudio(part.inlineData.data);
+        if (sc.outputTranscription?.text) { said += sc.outputTranscription.text; gatedText(sc.outputTranscription.text); }
+        if (sc.turnComplete) { openGate(); gate = null; turnDone = true; log(`spoke: ${said}`); said = ""; maybeDone(); }
       },
       onerror: (e) => log(`voice error: ${e.message ?? e}`),
       onclose: (e) => { log(`voice closed: ${e.code} ${e.reason}`); session = null; setTimeout(connectVoice, 1000); },
@@ -167,11 +196,12 @@ async function connectVoice() {
   });
 }
 
-function say(text) {
+function say(text, retried = false) {
   if (!session) { log("say ignored: voice not connected"); return; }
   if (out.state !== "running") out.resume();  // autoplay policies start audio suspended
-  stopPlayback();
+  if (!retried) stopPlayback();
   line += 1; playingLine = line; turnDone = false; said = "";
+  gate = { chunks: [], timer: null, text, retried, open: false };
   handUp = false;
   setState("speaking", "Speaking", text.slice(0, 160));
   session.sendClientContent({ turns: [{ role: "user", parts: [{ text }] }], turnComplete: true });

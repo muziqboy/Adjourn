@@ -103,6 +103,13 @@ async def lower_hand(store: Store) -> None:
 
 
 def handle_webhook(store: Store, payload: dict) -> None:
+    from . import floor
+
+    speech = recall.parse_speech_event(payload)
+    if speech is not None:
+        if floor.current is not None and live_voice(store):
+            floor.current.on_speech(*speech)
+        return
     parsed = recall.parse_transcript_event(payload)
     if parsed is None:
         return
@@ -112,7 +119,6 @@ def handle_webhook(store: Store, payload: dict) -> None:
     event, text, speaker = parsed
     if store.bot.get("state") in ("joining", "waiting_room"):
         store.set_bot("in_call")  # captions only flow once the bot is in
-    from . import floor
     if floor.current is not None and live_voice(store):
         floor.current.on_caption(speaker, text, final=event == "transcript.data")
         if floor.current.is_adjourn(speaker):

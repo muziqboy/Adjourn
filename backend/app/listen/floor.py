@@ -1,12 +1,17 @@
 """The floor: Adjourn's turn-taking mind in a live meeting. Decides when to speak, when to raise
 its hand, and when to stay silent. The voice page (live_voice.py) only says what this decides.
 
-    Meet captions (speaker names) --> on_caption() --> the room pauses --> decide()
-        decide(): one Gemini Flash call (with Google Search) sees the whole picture and returns
+    Meet captions (speaker names)   --> on_caption()   what was said
+    Recall speech_on / speech_off   --> on_speech()    who is talking right now (fast)
+    nobody talking + something new  --> decide(): one small, fast Gemini call (with Google
+        Search) sees the whole picture and returns
         {"action": "speak" | "raise_hand" | "lower_hand" | "silent", "say", "point", "reason"}
     speak       -> {"type": "say", "text"} to the voice page, which speaks it via Gemini Live
     raise_hand  -> {"type": "hand", "up": true, "point"}: the bot's tile shows a raised hand
     a person starts talking while Adjourn speaks -> {"type": "stop"} (barge-in)
+
+Timing: never decide while a person is talking; decide ~0.3 s after the last person stops and
+their caption is in. Without speech events (older bots) a pause in captions stands in.
 
 Why a separate mind: a live audio model answers whenever anyone stops talking, hears one mixed
 stream without names, and knows nothing about the meeting. Here every decision is deliberate,
@@ -17,6 +22,7 @@ so the prompt tells the model to infer the intended words.
 """
 
 import asyncio
+import difflib
 import json
 import logging
 import re
@@ -29,9 +35,12 @@ from ..core.store import Store
 
 log = logging.getLogger("adjourn.floor")
 
-PAUSE_S = 0.9  # quiet this long after the last caption = the room paused; decide
-PAUSE_NAMED_S = 0.5  # shorter when Adjourn's name was just heard
-BARGE_IN_WORDS = 2  # a person saying this many words while Adjourn talks stops it
+AFTER_SPEECH_S = 0.3  # decide this long after the last person stopped talking
+PAUSE_S = 0.7  # fallback without speech events: quiet this long after the last caption
+PAUSE_NAMED_S = 0.4  # shorter when Adjourn's name was just heard
+BARGE_IN_WORDS = 2  # without speech events: this many caption words while Adjourn talks stops it
+FLOOR_MODEL: str | None = settings.floor_model  # tuned with scripts/eval_floor.py
+FLOOR_THINKING: str | None = settings.floor_thinking
 NAME = re.compile(r"\b(a ?d?journ\w*|ajourn\w*|adjourn\w*)\b", re.I)
 
 SYSTEM = """You are the turn-taking mind of Adjourn, an AI teammate attending a live video meeting as a participant.
@@ -102,32 +111,67 @@ class Floor:
         self._timer: asyncio.Task | None = None
         self._deciding: asyncio.Task | None = None
         self._partial_words: dict[str, int] = {}
+        self._seen_speakers: set[str] = set()
+        self.talking: set[str] = set()  # people talking right now (speech_on without speech_off)
+        self.has_speech_events = False  # this bot sends speech_on/off
 
     # --- input: captions ---
 
-    def is_adjourn(self, speaker: str | None) -> bool:
-        return bool(speaker) and speaker.strip().lower() == settings.bot_name.lower()
+    def is_adjourn(self, speaker: str | None, text: str = "") -> bool:
+        """Adjourn's own voice coming back through Meet: by name, or by matching what it just said
+        (the bot's captions do not always carry its name)."""
+        if speaker and speaker.strip().lower().startswith(settings.bot_name.lower()):
+            return True
+        if text:
+            recent = [t for _, _, t, own in list(self.lines)[-4:] if own]
+            words = text.lower()
+            return any(difflib.SequenceMatcher(None, words, r.lower()).ratio() > 0.6
+                       or (len(words) > 20 and words in r.lower()) for r in recent)
+        return False
+
+    def on_speech(self, speaker: str, talking: bool) -> None:
+        """Recall's speech_on / speech_off: the fastest signal of who holds the floor."""
+        if self.is_adjourn(speaker):
+            return
+        self.has_speech_events = True
+        if talking:
+            self.talking.add(speaker)
+            if self._timer and not self._timer.done():
+                self._timer.cancel()  # never decide while someone is talking
+            if self.speaking:
+                self._send({"type": "stop"})  # a person started talking: Adjourn yields at once
+                self.speaking = False
+                log.info("barge-in by %s", speaker)
+        else:
+            self.talking.discard(speaker)
+            if not self.talking:
+                self._schedule(AFTER_SPEECH_S)
 
     def on_caption(self, speaker: str | None, text: str, final: bool) -> None:
         """Every Meet caption, partial or final. Adjourn's own captions are recorded, never answered."""
         text = " ".join(text.split())
         if not text:
             return
-        if self.is_adjourn(speaker):
-            if final:
-                self.lines.append((time.time(), settings.bot_name, text, True))
-            return
+        if self.is_adjourn(speaker, text):
+            return  # its own words are already in the history (apply())
         who = speaker or "Someone"
+        if who not in self._seen_speakers:
+            self._seen_speakers.add(who)
+            log.info("caption speaker: %r", who)
         words = len(text.split())
-        if self.speaking and words >= BARGE_IN_WORDS and words > self._partial_words.get(who, 0):
-            self._send({"type": "stop"})  # a person started talking: Adjourn yields
+        if not self.has_speech_events and self.speaking and words >= BARGE_IN_WORDS and words > self._partial_words.get(who, 0):
+            self._send({"type": "stop"})  # fallback barge-in from captions
             self.speaking = False
-            log.info("barge-in by %s", who)
+            log.info("barge-in by %s (captions)", who)
         self._partial_words[who] = 0 if final else words
         if final:
             self.lines.append((time.time(), who, text, False))
             self.new_since_decision += 1
-        self._schedule(PAUSE_NAMED_S if NAME.search(text) else PAUSE_S)
+        if self.has_speech_events:
+            if final and not self.talking:
+                self._schedule(AFTER_SPEECH_S)  # the caption landed after they stopped talking
+        else:
+            self._schedule(PAUSE_NAMED_S if NAME.search(text) else PAUSE_S)
 
     def _schedule(self, delay: float) -> None:
         if self._timer and not self._timer.done():
@@ -136,7 +180,7 @@ class Floor:
 
     async def _after_pause(self, delay: float) -> None:
         await asyncio.sleep(delay)
-        if self.new_since_decision == 0 or self.speaking:
+        if self.new_since_decision == 0 or self.speaking or self.talking:
             return
         if self._deciding and not self._deciding.done():
             self._deciding.cancel()  # newer speech supersedes an unfinished decision
@@ -175,11 +219,14 @@ class Floor:
         started = time.time()
         last_line = self.lines[-1][2] if self.lines else ""
         result = await llm.generate(
-            "floor", prompt, system=SYSTEM, search=True,
+            "floor", prompt, system=SYSTEM, search=True, model=FLOOR_MODEL, thinking=FLOOR_THINKING,
             mock=lambda: llm.LLMResult(text=json.dumps(_mock_decision(last_line, self.hand))), mock_delay=0.3,
         )
         decision = _parse(result.text)
         log.info("floor %.1fs: %s", time.time() - started, decision)
+        if self.talking:  # someone started talking meanwhile: never start speaking over them
+            self.new_since_decision += 1  # decide afresh when they stop
+            return decision
         if self.new_since_decision and decision["action"] != "speak":
             return decision  # people kept talking; the next pause decides again
         self.apply(decision)
@@ -208,6 +255,8 @@ class Floor:
         """The page finished saying Adjourn's words."""
         self.speaking = False
         self.last_spoke_at = time.time()
+        if self.new_since_decision and not self.talking:
+            self._schedule(AFTER_SPEECH_S)  # someone spoke while Adjourn was talking
 
     def _send(self, message: dict) -> None:
         for page in list(self.pages):
@@ -216,6 +265,7 @@ class Floor:
     def reset(self) -> None:
         self.lines.clear()
         self.hand, self.speaking, self.last_spoke_at, self.new_since_decision = None, False, 0.0, 0
+        self.talking.clear()
 
 
 async def _safe_send(ws, message: dict) -> None:

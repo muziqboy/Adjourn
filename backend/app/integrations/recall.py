@@ -94,7 +94,9 @@ def bot_config(meeting_url: str | None = None, live_voice_url: str | None = None
             "realtime_endpoints": [{
                 "type": "webhook",
                 "url": webhook_url(),
-                "events": ["transcript.data", "transcript.partial_data"],
+                # speech_on/off: who starts and stops talking, within moments (turn-taking, barge-in)
+                "events": ["transcript.data", "transcript.partial_data",
+                           "participant_events.speech_on", "participant_events.speech_off"],
             }],
         },
         # Recall only allows output_audio later if the bot was created with an automatic
@@ -153,6 +155,16 @@ def parse_transcript_event(payload: dict) -> tuple[str, str, str | None] | None:
     text = " ".join(w.get("text", "") for w in data.get("words") or []).strip()
     speaker = (data.get("participant") or {}).get("name")
     return event, text, speaker
+
+
+def parse_speech_event(payload: dict) -> tuple[str, bool] | None:
+    """(participant name, started talking?) from a speech_on / speech_off webhook."""
+    event = payload.get("event", "")
+    if event not in ("participant_events.speech_on", "participant_events.speech_off"):
+        return None
+    data = payload.get("data") or {}
+    participant = (data.get("data") or {}).get("participant") or data.get("participant") or {}
+    return participant.get("name") or "Someone", event.endswith("speech_on")
 
 
 def bot_id_of(payload: dict) -> str | None:

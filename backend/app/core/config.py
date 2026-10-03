@@ -47,6 +47,10 @@ class Settings:
         self.model_live = os.getenv("MODEL_LIVE", "gemini-3.8-live")
         # Roles (intent, answer, issue, ...) whose calls go through Condense. Empty = off.
         self.condense_roles = _list("CONDENSE_ROLES", "")
+        # The live-voice turn-taking mind (listen/floor.py) is latency-critical: a small model with
+        # minimal thinking decides in 0.5-1.5 s (scripts/eval_floor.py: 10/10 situations)
+        self.floor_model = os.getenv("FLOOR_MODEL", "gemini-3.5-flash-lite")
+        self.floor_thinking = os.getenv("FLOOR_THINKING", "minimal")
         self.condense_base_url = os.getenv("CONDENSE_BASE_URL", "")
         self.condense_api_key = os.getenv("CONDENSE_API_KEY", "")
 

@@ -70,6 +70,8 @@ def build_router(store: Store, floor: Floor) -> APIRouter:
                         prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=settings.tts_voice))),
                     system_instruction=VOICE,
                     output_audio_transcription=types.AudioTranscriptionConfig(),
+                    # no thinking: it once spoke its reasoning ("The user wants me to read...")
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
                 ),
             ),
         ))
