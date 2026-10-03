@@ -65,9 +65,12 @@ class Settings:
         self.public_url = os.getenv("PUBLIC_URL", "").rstrip("/")  # e.g. https://xyz.trycloudflare.com
         self.recall_webhook_token = os.getenv("RECALL_WEBHOOK_TOKEN") or secrets.token_urlsafe(16)
         self.bot_name = os.getenv("BOT_NAME", "Adjourn")
-        # macOS voice for the bot. Pinned to English: the default follows the Mac's language
-        # (Swedish on the demo laptop) and reads English answers with a Swedish accent.
-        self.tts_voice = os.getenv("TTS_VOICE", "Daniel")
+        # The bot's voice: Gemini's speech model (integrations/voice.py), e.g. Kore, Puck, Charon
+        self.tts_model = os.getenv("TTS_MODEL", "gemini-3.8-flash-tts")
+        self.tts_voice = os.getenv("TTS_VOICE", "Kore")
+        # Fallback when Gemini speech fails: a macOS voice. Pinned to English, since the default
+        # follows the Mac's language (Swedish on the demo laptop).
+        self.mac_voice = os.getenv("MAC_VOICE", "Daniel")
         # Calendar auto-join (listen/autojoin.py): on start, connect the demo account's Google
         # Calendar to Recall and send the bot to every Meet on it. Needs token.json.
         self.auto_join = os.getenv("AUTO_JOIN", "false").strip().lower() in ("1", "true", "yes", "on")

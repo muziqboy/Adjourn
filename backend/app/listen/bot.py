@@ -66,7 +66,7 @@ def prepare_speech(text: str) -> asyncio.Task:
     """Start rendering `text` to MP3 now. macOS speech takes ~5 s for a 60-word answer, so the
     answer agent prepares it while the hand is up, and "Go ahead" plays without a pause."""
     if text not in _speech:
-        _speech[text] = asyncio.create_task(asyncio.to_thread(voice.speak_mp3, text, settings.tts_voice))
+        _speech[text] = asyncio.create_task(asyncio.to_thread(voice.speak_mp3, text))
     return _speech[text]
 
 
