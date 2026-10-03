@@ -5,20 +5,32 @@
 Adjourn joins your Google Meet call as a participant (or listens from a narrow panel beside
 it). When someone asks a
 question it can answer, it **raises its hand**, and when you let it, **answers out loud**.
-When someone commits to work, it drafts the **GitHub issue**; when you agree to meet, it books
-the **calendar** slot. Change your mind mid-call ("actually, Friday") and the same event
-moves, and the issue follows.
+When someone commits to work, it drafts the **GitHub issue** or **Linear ticket**; when you agree to meet, it books
+the **calendar** slot; when you promise a follow-up note, it drafts the **Gmail email**. Change your mind mid-call ("actually, Friday") and the same event
+moves, and the downstream tasks follow.
 
 - **The demo** (and acceptance test): [docs/DEMO.md](docs/DEMO.md)
 - **How it is built, and how to add an agent**: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - **Decisions, open questions, spikes**: [docs/SCOPE.md](docs/SCOPE.md)
 - **Working in this repo**: [AGENTS.md](AGENTS.md)
 
+## Supported Tools & Integrations
+
+| Tool / Service | Agent / Area | Capabilities | Modes |
+|---|---|---|---|
+| **Google Calendar** | `schedule`, `autojoin` | Checks slot availability, creates tentative calendar holds, sends invites upon approval, and auto-joins upcoming Google Meet calls | `mock`, `links`, `live` |
+| **GitHub** | `issue` | Drafts and creates GitHub issues grounded in transcript commitments, verified against call statements | `mock`, `links`, `live` |
+| **Linear** | `linear` | Plans and creates/updates Linear issues via Linear's MCP server, with 1-click or in-call voice approval | `mock`, `live` |
+| **Gmail (TBD)** | `email` | Drafts follow-up and recap emails to meeting participants based on discussion and action items | `mock`, `links`, `live` |
+| **Google Search** | `answer`, `research` | Grounded real-time web search via Gemini to fact-check and answer technical questions live | `mock`, `live` |
+| **Recall.ai** | `listen/bot` | Meeting bot that joins Google Meet, transcribes speech with speaker attribution, and speaks answers into the call | `mock`, `live` |
+| **Model Context Protocol (MCP)** | `api/mcp` | Exposes Adjourn's live task graph at `/mcp` so external agents (Google Antigravity, Claude) can inspect, steer, and approve tasks; integrates with remote MCP tools (e.g. Linear) | Live `/mcp` server |
+
 ## How it works
 
     Meet ─> live transcript (Gemini Live) ─> meeting agent (one long Gemini session) ─> task graph
-          ─> agents: answer (Gemini + Google Search) · issue (GitHub) · schedule (Google Calendar)
-          ─> independent verification ─> one-click approval ─> panel
+          ─> agents: answer (Gemini + Search) · issue (GitHub) · linear (Linear MCP) · schedule (Calendar) · email (Gmail)
+          ─> independent verification ─> one-click / voice approval ─> panel & external tools
 
 - **Task graph.** The issue waits for the answer it builds on. When an upstream task changes
   (the meeting moves), everything that used it re-runs and updates its object in place.
@@ -30,8 +42,8 @@ moves, and the issue follows.
 - **Steerable by other agents.** An MCP server exposes the live task graph, so Google
   Antigravity (or any MCP client) can list, create, steer and approve tasks.
 - **Approval policy.** Private, reversible work happens straight away (a hold on your own
-  calendar, a draft on the panel). Anything that reaches other people waits for one click:
-  **Let it speak**, **Create issue**, **Send invite**.
+  calendar, a draft on the panel). Anything that reaches other people waits for one click or explicit voice confirmation:
+  **Let it speak**, **Create issue**, **Send invite**, **Do it in Linear**.
 
 ## Run it
 
@@ -45,8 +57,8 @@ Open http://localhost:5173 in its own narrow window beside Meet, use speakers (n
 headphones), and press **Start listening**. **Replay demo** plays the demo call through the
 same pipeline. Tests: `cd backend && uv run pytest -q`.
 
-For real services set `LLM_MODE=gemini`, `GOOGLE_MODE=live` (or `links`) and `GITHUB_MODE=live`
-(or `links`) in `.env`. Google sign-in steps are in [AGENTS.md](AGENTS.md#google-sign-in).
+For real services set `LLM_MODE=gemini`, `GOOGLE_MODE=live` (or `links`), `GITHUB_MODE=live`
+(or `links`), and `LINEAR_API_KEY` in `.env`. Setup steps are in [AGENTS.md](AGENTS.md).
 
 ## Built with
 
@@ -54,7 +66,8 @@ For real services set `LLM_MODE=gemini`, `GOOGLE_MODE=live` (or `links`) and `GI
 - Gemini Live API: streaming transcription of the call (laptop-audio mode)
 - Gemini Flash: the meeting agent, the agents and the fact-checker, with structured output
 - Gemini Google Search grounding: answers with sources
-- Google Calendar API, GitHub REST API (Gmail API for the email agent)
+- Google Calendar API, GitHub REST API, Gmail API
+- Linear API via Linear Remote MCP server
 - Condense (planned, see docs/SCOPE.md)
 - Model Context Protocol (MCP) server for Google Antigravity
 - FastAPI, React, Vite

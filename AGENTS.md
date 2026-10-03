@@ -116,3 +116,19 @@ before each tool call; `approve_task` is the only tool that reaches other people
 Create a fine-grained token with "Issues: read and write" on the demo repository. Set
 `GITHUB_REPO=owner/name`, `GITHUB_TOKEN=...`, run `uv run python scripts/smoke_github.py`,
 then `GITHUB_MODE=live`. Without a token, `GITHUB_MODE=links` opens a prefilled issue page.
+
+## Linear
+
+Linear integration uses Linear's remote MCP server (`https://mcp.linear.app/mcp`) for read-only planning and gated write execution.
+
+1. Generate a personal API key from your Linear workspace settings (Developer > API).
+2. Set `LINEAR_API_KEY=lin_api_...` in `.env` (optional: set `LINEAR_TEAM=TEAM_KEY`).
+3. Add `linear` to `AGENTS` in `.env` (e.g. `AGENTS=answer,issue,schedule,linear`).
+4. Test with the smoke script: `cd backend && uv run python scripts/smoke_linear.py <assignee-email>`.
+5. For offline testing without network calls, set `LINEAR_MODE=mock`.
+
+## Gmail & Google Search
+
+- **Gmail**: Enabled with Google sign-in (requires `gmail.compose` scope in `backend/token.json`). Set `GOOGLE_MODE=live` to draft follow-up emails, or `links` for prefilled mailto URLs. Add `email` to `AGENTS`.
+- **Google Search (Grounding)**: Grounded live search used by the `answer` and `research` agents. Enabled automatically when `LLM_MODE=gemini` and `GEMINI_API_KEY` is provided.
+
