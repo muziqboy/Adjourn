@@ -38,6 +38,7 @@ log = logging.getLogger("adjourn.floor")
 AFTER_SPEECH_S = 0.3  # decide this long after the last person stopped talking
 PAUSE_S = 0.7  # fallback without speech events: quiet this long after the last caption
 PAUSE_NAMED_S = 0.4  # shorter when Adjourn's name was just heard
+TALKING_STALE_S = 6.0  # a speech_on without speech_off for this long no longer blocks decisions
 BARGE_IN_WORDS = 2  # without speech events: this many caption words while Adjourn talks stops it
 FLOOR_MODEL: str | None = settings.floor_model  # tuned with scripts/eval_floor.py
 FLOOR_THINKING: str | None = settings.floor_thinking
@@ -112,7 +113,7 @@ class Floor:
         self._deciding: asyncio.Task | None = None
         self._partial_words: dict[str, int] = {}
         self._seen_speakers: set[str] = set()
-        self.talking: set[str] = set()  # people talking right now (speech_on without speech_off)
+        self.talking: dict[str, float] = {}  # people talking right now -> last sign of speech
         self.has_speech_events = False  # this bot sends speech_on/off
 
     # --- input: captions ---
@@ -129,13 +130,23 @@ class Floor:
                        or (len(words) > 20 and words in r.lower()) for r in recent)
         return False
 
-    def on_speech(self, speaker: str, talking: bool) -> None:
-        """Recall's speech_on / speech_off: the fastest signal of who holds the floor."""
-        if self.is_adjourn(speaker):
+    def someone_talking(self) -> bool:
+        """True while a person holds the floor. Entries without a fresh sign of speech expire, so
+        a lost speech_off can never freeze Adjourn."""
+        now = time.time()
+        for who, seen in list(self.talking.items()):
+            if now - seen > TALKING_STALE_S:
+                del self.talking[who]
+        return bool(self.talking)
+
+    def on_speech(self, speaker: str | None, talking: bool) -> None:
+        """Recall's speech_on / speech_off: the fastest signal of who holds the floor.
+        Events without a name are the bot itself (Recall does not name it)."""
+        if not speaker or speaker == "Someone" or self.is_adjourn(speaker):
             return
         self.has_speech_events = True
         if talking:
-            self.talking.add(speaker)
+            self.talking[speaker] = time.time()
             if self._timer and not self._timer.done():
                 self._timer.cancel()  # never decide while someone is talking
             if self.speaking:
@@ -143,8 +154,8 @@ class Floor:
                 self.speaking = False
                 log.info("barge-in by %s", speaker)
         else:
-            self.talking.discard(speaker)
-            if not self.talking:
+            self.talking.pop(speaker, None)
+            if not self.someone_talking():
                 self._schedule(AFTER_SPEECH_S)
 
     def on_caption(self, speaker: str | None, text: str, final: bool) -> None:
@@ -164,12 +175,16 @@ class Floor:
             self.speaking = False
             log.info("barge-in by %s (captions)", who)
         self._partial_words[who] = 0 if final else words
+        if who in self.talking:
+            self.talking[who] = time.time()  # a caption is a fresh sign they are talking
         if final:
             self.lines.append((time.time(), who, text, False))
             self.new_since_decision += 1
         if self.has_speech_events:
-            if final and not self.talking:
-                self._schedule(AFTER_SPEECH_S)  # the caption landed after they stopped talking
+            if final:
+                # decide shortly; if someone is still talking, _after_pause keeps re-checking
+                # (and stale talkers expire), so nothing can hang
+                self._schedule(AFTER_SPEECH_S)
         else:
             self._schedule(PAUSE_NAMED_S if NAME.search(text) else PAUSE_S)
 
@@ -180,7 +195,10 @@ class Floor:
 
     async def _after_pause(self, delay: float) -> None:
         await asyncio.sleep(delay)
-        if self.new_since_decision == 0 or self.speaking or self.talking:
+        if self.new_since_decision == 0 or self.speaking:
+            return
+        if self.someone_talking():
+            self._schedule(1.0)  # check again shortly; stale entries expire
             return
         if self._deciding and not self._deciding.done():
             self._deciding.cancel()  # newer speech supersedes an unfinished decision
@@ -224,7 +242,7 @@ class Floor:
         )
         decision = _parse(result.text)
         log.info("floor %.1fs: %s", time.time() - started, decision)
-        if self.talking:  # someone started talking meanwhile: never start speaking over them
+        if self.someone_talking():  # someone started talking meanwhile: never start speaking over them
             self.new_since_decision += 1  # decide afresh when they stop
             return decision
         if self.new_since_decision and decision["action"] != "speak":
@@ -255,7 +273,7 @@ class Floor:
         """The page finished saying Adjourn's words."""
         self.speaking = False
         self.last_spoke_at = time.time()
-        if self.new_since_decision and not self.talking:
+        if self.new_since_decision and not self.someone_talking():
             self._schedule(AFTER_SPEECH_S)  # someone spoke while Adjourn was talking
 
     def _send(self, message: dict) -> None:

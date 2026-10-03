@@ -115,3 +115,18 @@ def test_own_voice_by_name_or_echo_is_never_a_question(orch, monkeypatch):
         assert kinds(page).count("say") == 1 and floor.new_since_decision == 0
 
     run(body())
+
+
+def test_a_lost_speech_off_never_freezes_it(orch, monkeypatch):
+    monkeypatch.setattr(floor_module, "AFTER_SPEECH_S", 0.05)
+    monkeypatch.setattr(floor_module, "TALKING_STALE_S", 0.2)
+
+    async def body():
+        floor, page = make_floor()
+        floor.on_speech(None, True)  # unnamed = the bot itself: ignored
+        assert not floor.talking
+        floor.on_speech("Star Developer", True)  # ...and its speech_off never comes
+        floor.on_caption("Kaleb", "Adjourn, who am I?", final=True)
+        await until(lambda: "say" in kinds(page), timeout=5)
+
+    run(body())

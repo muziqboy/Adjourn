@@ -157,14 +157,14 @@ def parse_transcript_event(payload: dict) -> tuple[str, str, str | None] | None:
     return event, text, speaker
 
 
-def parse_speech_event(payload: dict) -> tuple[str, bool] | None:
+def parse_speech_event(payload: dict) -> tuple[str | None, bool] | None:
     """(participant name, started talking?) from a speech_on / speech_off webhook."""
     event = payload.get("event", "")
     if event not in ("participant_events.speech_on", "participant_events.speech_off"):
         return None
     data = payload.get("data") or {}
     participant = (data.get("data") or {}).get("participant") or data.get("participant") or {}
-    return participant.get("name") or "Someone", event.endswith("speech_on")
+    return participant.get("name"), event.endswith("speech_on")  # no name: the bot itself
 
 
 def bot_id_of(payload: dict) -> str | None:
