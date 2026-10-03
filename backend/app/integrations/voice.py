@@ -22,8 +22,8 @@ from ..core.config import settings
 
 log = logging.getLogger("adjourn.voice")
 
-# How the voice should sound; Gemini's speech models take direction in the prompt.
-STYLE = "Say this warmly and conversationally, like a helpful colleague speaking up in a meeting"
+# No style direction in the prompt: the speech model sometimes reads it out loud. The voice
+# (TTS_VOICE) carries the tone.
 
 SAMPLE_RATE = 22050
 
@@ -54,7 +54,7 @@ def _gemini_mp3(text: str) -> bytes:
 
     response = client().models.generate_content(
         model=settings.tts_model,
-        contents=f"{STYLE}: {text}",
+        contents=text,
         config=types.GenerateContentConfig(
             response_modalities=["AUDIO"],
             speech_config=types.SpeechConfig(voice_config=types.VoiceConfig(
