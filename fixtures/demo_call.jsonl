@@ -1,7 +1,8 @@
-{"t": 0, "speaker": "B", "text": "Before we commit, can you send me a summary of what Rover and Wag charge?"}
-{"t": 6, "speaker": "A", "text": "Sure. Let's do a follow-up next Tuesday at three to go through it."}
-{"t": 12, "speaker": "B", "text": "Great. How was the trip to Gothenburg, by the way?"}
-{"t": 17, "speaker": "A", "text": "Good, mostly rain. The new office is lovely though."}
-{"t": 22, "speaker": "B", "text": "Nice. Our team is growing too, we hired two people this month."}
-{"t": 28, "speaker": "B", "text": "Actually Tuesday is bad for me. Can we do Thursday, same time?"}
-{"t": 34, "speaker": "A", "text": "Thursday works. I'll send the invite now."}
+{"t": 0, "speaker": "B", "text": "Search has been really slow this week, p95 is around 800 milliseconds."}
+{"t": 4, "speaker": "B", "text": "Would Redis help speed up our API?"}
+{"t": 16, "speaker": "A", "text": "Makes sense. Can you open an issue to add a Redis cache in front of search?"}
+{"t": 23, "speaker": "B", "text": "Let's go through the latency numbers together on Thursday at two."}
+{"t": 29, "speaker": "A", "text": "Sounds good. How was the offsite, by the way?"}
+{"t": 34, "speaker": "B", "text": "Great, lots of whiteboards and far too much coffee."}
+{"t": 41, "speaker": "B", "text": "Actually Thursday is packed for me. Can we do Friday, same time?"}
+{"t": 47, "speaker": "A", "text": "Friday works. I'll send the invite and create the issue now."}

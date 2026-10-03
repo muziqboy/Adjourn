@@ -10,8 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from google_auth_oauthlib.flow import InstalledAppFlow  # noqa: E402
 
-from app.config import settings  # noqa: E402
-from app.google_api import SCOPES  # noqa: E402
+from app.core.config import settings  # noqa: E402
+from app.integrations.google import SCOPES  # noqa: E402
 
 if not settings.credentials_file.exists():
     sys.exit(f"Missing {settings.credentials_file}")

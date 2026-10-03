@@ -1,4 +1,17 @@
-"""In-memory state and event fan-out. All state changes go through here."""
+"""In-memory state and event fan-out to the panel.
+
+All state changes go through the Store, and every change emits an event on `/ws`:
+
+    snapshot          full state, on connect and after reset
+    meeting.state     {state: idle | live | ended}
+    transcript.delta  {text, final}
+    task.created      Task
+    task.updated      Task (full; the panel replaces it by id)
+    task.trace        {task_id, entry}
+    usage.updated     {calls, tokens_in, tokens_out}
+
+There is no database: a backend restart loses the meeting. Do not restart during a recording.
+"""
 
 import asyncio
 import time
@@ -14,7 +27,10 @@ class Store:
         self.seq = 0
         self._next_id = 1  # never reset, so a stale run can never match a new task's id
         self.subscribers: set[asyncio.Queue] = set()
+        # called with every finalised transcript line (the intent pass subscribes here)
         self.line_listeners: list[Callable[[str], None]] = []
+        # filled in by main.py: describes the registered agents and integration modes for the panel
+        self.describe_agents: Callable[[], list[dict]] = lambda: []
         self._clear()
 
     def _clear(self) -> None:
@@ -47,7 +63,8 @@ class Store:
             "lines": self.lines[-50:],
             "tasks": [t.model_dump() for t in self.tasks.values()],
             "usage": self.usage.model_dump(),
-            "modes": {"llm": settings.llm_mode, "google": settings.google_mode},
+            "modes": {"llm": settings.llm_mode, "google": settings.google_mode, "github": settings.github_mode},
+            "agents": self.describe_agents(),
         }
 
     def reset(self) -> None:
@@ -76,6 +93,8 @@ class Store:
     # transcript
 
     def add_line(self, text: str) -> None:
+        """A finalised transcript line, from audio, the text box or a replay. Everything
+        downstream of this call is the same whatever the source."""
         text = " ".join(text.split())
         if not text:
             return
@@ -85,6 +104,7 @@ class Store:
             listener(text)
 
     def interim(self, text: str) -> None:
+        """Unfinished speech, shown grey on the panel; never reaches the intent pass."""
         self.emit("transcript.delta", {"text": text, "final": False})
 
     def transcript(self) -> str:
@@ -98,6 +118,7 @@ class Store:
         return task_id
 
     def put_task(self, task: Task, created: bool = False) -> None:
+        """Publish a task's new state. Only the orchestrator calls this."""
         self.tasks[task.id] = task
         self.emit("task.created" if created else "task.updated", task.model_dump())
 

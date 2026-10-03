@@ -1,6 +1,16 @@
-"""/ws/audio: binary 16 kHz PCM frames from the panel -> Gemini Live (transcription only)
--> finalised transcript lines in the Store. The Live socket is the only model call that
-does not go through llm.generate."""
+"""Listening: /ws/audio receives 16 kHz 16-bit PCM frames (~100 ms each) from the panel's
+microphone (frontend/src/audio/capture.ts) and turns them into transcript lines.
+
+    panel mic -> /ws/audio -> Gemini Live (transcription only) -> LineBuffer -> store.add_line
+
+- One Live session, used only for input transcription. Live models answer in audio; we discard it.
+- There are no speaker labels; nothing downstream may rely on who spoke.
+- The session holds no state we need, so on any close or error we open a new one. That also
+  covers the ~10-minute connection limit.
+- In LLM_MODE=mock, frames are received and dropped: type or replay instead.
+
+The Live socket is the only model call that does not go through llm.generate.
+"""
 
 import asyncio
 import logging
@@ -8,8 +18,8 @@ import time
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from .config import settings
-from .store import Store
+from ..core.config import settings
+from ..core.store import Store
 
 log = logging.getLogger("adjourn.audio")
 
@@ -46,6 +56,8 @@ class LineBuffer:
 
 
 async def handle(ws: WebSocket, store: Store) -> None:
+    """One panel connection. Frames are queued (oldest dropped if we fall behind) so a slow
+    Live session never blocks the socket."""
     await ws.accept()
     frames: asyncio.Queue[bytes] = asyncio.Queue(maxsize=300)
 
@@ -92,7 +104,7 @@ async def _transcribe_forever(frames: asyncio.Queue, buffer: LineBuffer) -> None
 async def _one_session(frames: asyncio.Queue, buffer: LineBuffer) -> None:
     from google.genai import types
 
-    from .llm import client
+    from ..llm.gemini import client
 
     config = types.LiveConnectConfig(
         response_modalities=[types.Modality.AUDIO],

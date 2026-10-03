@@ -2,70 +2,54 @@
 
 **Every call ends with promises. Adjourn keeps them before you hang up.**
 
-Adjourn sits in a narrow panel beside your Google Meet call and listens to both sides. When
-someone commits to something, it does it: books the follow-up in Google Calendar, drafts the
-email in Gmail, researches the open question. Change your mind mid-call ("actually, make it
-Thursday") and the same event moves, and the draft follows.
+Adjourn sits in a narrow panel beside your Google Meet call and listens. When someone asks a
+question it can answer, it **raises its hand**, and when you let it, **answers out loud**.
+When someone commits to work, it drafts the **GitHub issue**; when you agree to meet, it books
+the **calendar** slot. Change your mind mid-call ("actually, Friday") and the same event
+moves, and the issue follows.
+
+- **The demo** (and acceptance test): [docs/DEMO.md](docs/DEMO.md)
+- **How it is built, and how to add an agent**: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- **Decisions, open questions, spikes**: [docs/SCOPE.md](docs/SCOPE.md)
+- **Working in this repo**: [AGENTS.md](AGENTS.md)
 
 ## How it works
 
-    Meet call ── laptop speakers ──> panel mic ──> 16 kHz PCM ──> WS /ws/audio
-                                                                      │
-                                         Gemini Live (transcription only)
-                                                                      │
-                                     intent pass (one long Gemini session) ──> create / update ops
-                                                                      │
-                          orchestrator: task graph, dependencies, steering, cancellation, revision
-                                 │                    │                     │
-                             scheduler             emailer             researcher
-                         (Google Calendar)        (Gmail)      (Gemini + Google Search)
-                                 └────────────────────┼─────────────────────┘
-                                         verifier ──> approval gate ──> panel (WS /ws)
+    Meet ─> live transcript (Gemini Live) ─> meeting agent (one long Gemini session) ─> task graph
+          ─> agents: answer (Gemini + Google Search) · issue (GitHub) · schedule (Google Calendar)
+          ─> independent verification ─> one-click approval ─> panel
 
-- **Task graph.** An email that needs research findings waits for them. When an upstream
-  task changes (the meeting moves), every task that used it re-runs and updates its Google
-  object in place, never creating a second one.
-- **Steering.** An update cancels the running agent, bumps the task's revision, and re-runs it
-  against the existing Calendar event or Gmail draft.
-- **Independent verification.** Code checks the event (future, sane duration, only known
-  participants, slot free) and the brief (two or more sources); a separate model call checks
-  every claim in the email against the transcript and the research.
+- **Task graph.** The issue waits for the answer it builds on. When an upstream task changes
+  (the meeting moves), everything that used it re-runs and updates its object in place.
+- **Steering.** "Actually, Friday" cancels the running agent, bumps the task's revision and
+  re-runs it against the existing calendar event: never a second one.
+- **Independent verification.** Code checks every event (future, sane length, participants
+  only, slot free) and answer (grounded, short enough to say); a separate model call checks
+  every claim in an issue against the transcript.
 - **Approval policy.** Private, reversible work happens straight away (a hold on your own
-  calendar, a Gmail draft). Anything that reaches another person waits for one click: "Send
-  invite". Adjourn never sends email.
+  calendar, a draft on the panel). Anything that reaches other people waits for one click:
+  **Let it speak**, **Create issue**, **Send invite**.
 
 ## Run it
 
 Requirements: Python 3.12+ with [uv](https://docs.astral.sh/uv/), Node 20+, Chrome.
 
-    cp .env.example .env
-    cd backend && uv sync && uv run uvicorn app.main:app --port 8010
+    cp .env.example .env                 # all mocks: runs with no keys
+    cd backend && uv sync && uv run uvicorn app.main:app --port 8010 --reload --timeout-graceful-shutdown 1
     cd frontend && npm install && npm run dev
 
 Open http://localhost:5173 in its own narrow window beside Meet, use speakers (not
-headphones), and press **Start listening**. **Replay demo** plays a recorded call through the
-same pipeline.
+headphones), and press **Start listening**. **Replay demo** plays the demo call through the
+same pipeline. Tests: `cd backend && uv run pytest -q`.
 
-### Modes (`.env`)
-
-| Setting | Values | |
-|---|---|---|
-| `LLM_MODE` | `mock`, `gemini` | `mock` needs no key: canned outputs and a keyword intent matcher |
-| `GOOGLE_MODE` | `mock`, `links`, `live` | `links` opens prefilled Calendar and Gmail pages, no sign-in; `live` uses the APIs |
-
-### Google setup (live mode)
-
-1. console.cloud.google.com: create a project; enable the Google Calendar API and the Gmail API.
-2. OAuth consent screen: External, Testing; add your account as a test user.
-3. Credentials: OAuth client ID, type Desktop app; save it as `backend/credentials.json`.
-4. `cd backend && uv run python scripts/google_auth.py` and sign in (on "Google hasn't verified this app": Advanced, continue).
-
-Scopes: `calendar` and `gmail.compose`.
+For real services set `LLM_MODE=gemini`, `GOOGLE_MODE=live` (or `links`) and `GITHUB_MODE=live`
+(or `links`) in `.env`. Google sign-in steps are in [AGENTS.md](AGENTS.md#google-sign-in).
 
 ## Built with
 
-- Gemini Live API (`gemini-3.8-live`): streaming transcription of the call
-- Gemini Flash (`gemini-3.8-flash`): intent pass, agents and email review, with structured output
-- Gemini Google Search grounding: research briefs with sources
-- Google Calendar API and Gmail API
+- Gemini Live API: streaming transcription of the call
+- Gemini Flash: the meeting agent, the agents and the fact-checker, with structured output
+- Gemini Google Search grounding: answers with sources
+- Google Calendar API, GitHub REST API (Gmail API for the email agent)
+- Condense (planned, see docs/SCOPE.md)
 - FastAPI, React, Vite

@@ -1,5 +1,11 @@
 # Adjourn: build plan
 
+> **Status, 3 October, 15:00:** this was the first build plan. The demo has since been
+> rewritten around the team's direction (answer + GitHub issue + calendar, raise hand and
+> speak): see `docs/DEMO.md`. Current decisions and open questions live in `docs/SCOPE.md`,
+> the code layout in `docs/ARCHITECTURE.md`. Sections 5–9 below still describe the engine
+> (transcription, intent pass, task graph, verification, approval), now in `backend/app/core/`.
+
 Written Saturday 3 October 2026, 14:00, Stockholm. **Submission closes at 19:00 today.**
 Team of three. The repo is empty apart from this file; build from it top to bottom.
 

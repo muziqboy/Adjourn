@@ -1,3 +1,5 @@
+/* Adjourn panel. Colours are tokens; dark mode redefines them. Card accent per task type:
+   .card.type-<type> sets the left border. */
 :root {
   --bg: #f6f6f4;
   --surface: #ffffff;
@@ -9,6 +11,8 @@
   --research: #8a5cf6;
   --email: #d9480f;
   --schedule: #1a73e8;
+  --answer: #188038;
+  --issue: #6e40c9;
   --ok: #188038;
   --warn: #b06000;
   --bad: #c5221f;
@@ -28,6 +32,8 @@
     --research: #b69cff;
     --email: #ff8a5c;
     --schedule: #8ab4f8;
+    --answer: #81c995;
+    --issue: #c297ff;
     --ok: #81c995;
     --warn: #fdd663;
     --bad: #f28b82;
@@ -37,6 +43,8 @@
   }
 }
 :root[data-theme="dark"] {
+  --answer: #81c995;
+  --issue: #c297ff;
   --bg: #17181a;
   --surface: #222326;
   --text: #e8e8e6;
@@ -142,9 +150,13 @@ legend { font-weight: 600; margin-bottom: 6px; }
   transition: background 600ms;
   animation: appear 250ms ease-out;
 }
-.card.research { border-left-color: var(--research); }
-.card.email { border-left-color: var(--email); }
-.card.schedule { border-left-color: var(--schedule); }
+.card.type-research { border-left-color: var(--research); }
+.card.type-email { border-left-color: var(--email); }
+.card.type-schedule { border-left-color: var(--schedule); }
+.card.type-answer { border-left-color: var(--answer); }
+.card.type-issue { border-left-color: var(--issue); }
+.card.dismissed { opacity: 0.5; }
+.card.dismissed h2 { text-decoration: line-through; }
 .card.flash { background: var(--flash); transition: none; }
 @keyframes appear { from { opacity: 0; transform: translateY(-6px); } }
 
@@ -155,6 +167,8 @@ legend { font-weight: 600; margin-bottom: 6px; }
 .status.needs_approval { color: var(--warn); font-weight: 600; }
 .status.done { color: var(--ok); }
 .status.failed { color: var(--bad); }
+.dismiss { border: 0; background: none; padding: 0 2px; color: var(--muted); font-size: 16px; line-height: 1; }
+.dismiss:hover { color: var(--bad); }
 .spinner {
   width: 10px; height: 10px; border-radius: 50%;
   border: 2px solid var(--line); border-top-color: var(--accent);

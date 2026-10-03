@@ -10,9 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from google.genai import types  # noqa: E402
 
-from app.config import settings  # noqa: E402
-from app.contract import OpList  # noqa: E402
-from app.llm import client  # noqa: E402
+from app.core.config import settings  # noqa: E402
+from app.core.contract import OpList  # noqa: E402
+from app.llm.gemini import client  # noqa: E402
 
 
 async def timed(name, coro):

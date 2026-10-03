@@ -1,5 +1,8 @@
+// The panel's whole connection to the backend: one WebSocket (/ws) folded into a view by a
+// reducer, plus the POST actions. Components never fetch on their own.
+
 import { useCallback, useEffect, useReducer, useRef } from "react";
-import type { MeetingContext, MeetingState, ServerEvent, Snapshot, Task, Usage } from "./contract";
+import type { AgentInfo, MeetingContext, MeetingState, Modes, ServerEvent, Snapshot, Task, Usage } from "./contract";
 
 export interface MeetingView {
   connected: boolean;
@@ -9,7 +12,8 @@ export interface MeetingView {
   interim: string;
   tasks: Task[]; // creation order
   usage: Usage;
-  modes: { llm: string; google: string };
+  modes: Modes;
+  agents: Record<string, AgentInfo>; // by type
 }
 
 const initial: MeetingView = {
@@ -20,7 +24,8 @@ const initial: MeetingView = {
   interim: "",
   tasks: [],
   usage: { calls: 0, tokens_in: 0, tokens_out: 0 },
-  modes: { llm: "?", google: "?" },
+  modes: { llm: "?", google: "?", github: "?" },
+  agents: {},
 };
 
 type Action = { type: "connected"; value: boolean } | { type: "event"; event: ServerEvent };
@@ -34,6 +39,7 @@ function fromSnapshot(s: Snapshot): Partial<MeetingView> {
     tasks: s.tasks,
     usage: s.usage,
     modes: s.modes,
+    agents: Object.fromEntries(s.agents.map((a) => [a.type, a])),
   };
 }
 
@@ -45,6 +51,7 @@ function upsert(tasks: Task[], task: Task): Task[] {
   return next;
 }
 
+/** Folds one server event into the view. task.updated always carries the full task. */
 function reducer(view: MeetingView, action: Action): MeetingView {
   if (action.type === "connected") return { ...view, connected: action.value };
   const { event } = action;
@@ -120,7 +127,8 @@ export function useMeeting() {
     stop: useCallback(() => post("/api/meeting/stop"), []),
     say: useCallback((text: string) => post("/api/transcript", { text }), []),
     replay: useCallback(() => post("/api/replay?name=demo_call&speed=1"), []),
-    approve: useCallback((id: string) => post(`/api/tasks/${id}/approve`), []),
+    approve: useCallback((id: string): Promise<Task> => post(`/api/tasks/${id}/approve`), []),
+    dismiss: useCallback((id: string) => post(`/api/tasks/${id}/dismiss`), []),
     reset: useCallback(() => post("/api/reset"), []),
   };
 }

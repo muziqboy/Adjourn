@@ -1,6 +1,10 @@
-// Mic -> 16 kHz 16-bit PCM -> WS /ws/audio, in ~100 ms binary frames.
-// Echo cancellation is off: the remote voice comes out of this laptop's speakers,
-// which is exactly what cancellation would remove.
+// Ears: microphone -> 16 kHz 16-bit PCM -> WS /ws/audio, in ~100 ms binary frames
+// (backend/app/listen/audio.py turns them into transcript lines).
+//
+// Echo cancellation is OFF on purpose: the other side of the call comes out of this laptop's
+// speakers, and that is exactly what cancellation would remove. So: speakers, not headphones.
+// The worklet that cuts frames lives in public/pcm-worklet.js (worklets must be separate files).
+// The panel must be its own window, not a background tab, or Chrome throttles the audio.
 
 export interface Capture {
   stop: () => void;
