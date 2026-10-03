@@ -122,6 +122,10 @@ async def run(task: Task, ctx: RunContext) -> Artifact:
     if existing:  # update the ticket we know about, never create a second one
         plan.action, plan.issue_id = "update", existing
     _plans[task.id] = (ctx.revision, plan)
+    if plan.assignee and plan.assignee_name and _on_call(plan, ctx):
+        from ..core.store import store
+
+        store.add_participant(plan.assignee_name, plan.assignee)  # Linear knows their email; invites need it
     ctx.trace("llm", f"Plan: {plan.action} “{plan.title}” → {_name_of(plan.assignee, ctx)}")
 
     previous = ctx.previous

@@ -6,6 +6,7 @@ Prints each situation, the decision, what it would say, and the decision time.
 
 import asyncio
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -21,6 +22,18 @@ PEOPLE = MeetingContext(me=Person(name="Kaleb Girmay", email="kaleb@example.com"
                         others=[Person(name="Jany Koulen", email="jany@example.com"), Person(name="Sara Lind", email="")])
 DRAFT = Task(id="t3", type="linear", title="Onboarding copy", brief="Create a Linear ticket: rewrite the onboarding copy. Assign it to Jany Koulen <jany@example.com>.",
              status="needs_approval", artifact=Artifact(kind="issue", title="Rewrite the onboarding copy", body="...", to=["jany@example.com"]))
+
+TICKET = Task(id="t3", type="linear", title="Onboarding copy", brief="Create a Linear ticket: rewrite the onboarding copy. Assign it to Jany Koulen <jany@example.com>.",
+              status="done", artifact=Artifact(kind="issue", title="Rewrite the onboarding copy", body="...", to=["jany@example.com"],
+                                               external_id="MEE-7", link="https://linear.app/meetagent/issue/MEE-7", delivered=True))
+HOLD = Task(id="t4", type="schedule", title="Review MEE-7: onboarding copy", depends_on=["t3"], status="needs_approval",
+            brief="Book a 30-minute meeting with Kaleb Girmay and Jany Koulen on Tuesday 13 October 2026 at 14:00 Europe/Stockholm to go through Linear ticket MEE-7.",
+            artifact=Artifact(kind="event", title="Review MEE-7: onboarding copy", start="2026-10-13T14:00:00+02:00", end="2026-10-13T14:30:00+02:00", external_id="evt_1"))
+
+
+def _schedule_op(d):
+    return next((t for t in d["tasks"] if t.get("op") == "create" and t.get("type") == "schedule"), None)
+
 
 # work cases: (name, check(decision) -> bool, [(speaker, text)], tasks)
 WORK = [
@@ -39,6 +52,15 @@ WORK = [
      [("Kaleb Girmay", "Adjourn, is the onboarding ticket created in Linear yet?")], [DRAFT]),
     ("drop draft", lambda d: d["dismiss"] == ["t3"] and not d["approve"],
      [("Kaleb Girmay", "Adjourn, scrap that onboarding ticket, we don't need it.")], [DRAFT]),
+    ("meeting about ticket, no day", lambda d: (d["action"] == "speak" and "?" in d["say"]) or (_schedule_op(d) and "t3" in (_schedule_op(d).get("depends_on") or [])),
+     [("Kaleb Girmay", "Great. Adjourn, let's set up a meeting next week to go through that ticket.")], [TICKET]),
+    ("agreed slot books it", lambda d: _schedule_op(d) and "t3" in (_schedule_op(d).get("depends_on") or []) and re.search(r"13 October|2026-10-13|October 13", _schedule_op(d).get("brief", "")),
+     [("Kaleb Girmay", "Adjourn, let's set up a meeting next week to go through that ticket."),
+      ("You", "How about Tuesday 13 October at 14:00 for half an hour?"), ("Kaleb Girmay", "Yes, that works.")], [TICKET]),
+    ("hold ready asks to invite", lambda d: d["action"] == "speak" and "?" in d["say"] and "invite" in d["say"].lower() and not d["approve"],
+     [(EVENT, "Draft ready, WAITING FOR APPROVAL (voice OK): t4 schedule \u201cReview MEE-7: onboarding copy\u201d")], [TICKET, HOLD]),
+    ("yes sends invite", lambda d: d["approve"] == ["t4"],
+     [("You", "The hold for Tuesday at two is in the calendar. Shall I send the invite to Jany?"), ("Kaleb Girmay", "Yes please, send it.")], [TICKET, HOLD]),
     ("memory", lambda d: d["action"] == "speak" and "800" in d["say"].replace(",", "").replace(" ms", "") + d["say"],
      [("Kaleb Girmay", "Our search p95 is around 800 milliseconds this week.")]
      + [("Jany Koulen" if i % 2 else "Kaleb Girmay", f"Some unrelated discussion about the roadmap, point {i}.") for i in range(40)]

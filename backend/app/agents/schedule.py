@@ -22,7 +22,7 @@ from .. import llm
 from ..core.config import settings
 from ..core.contract import Artifact, Op, Task
 from ..integrations import calendar
-from .base import AgentSpec, MockIntent, RunContext, human_slot
+from .base import AgentSpec, MockIntent, RunContext, describe_inputs, human_slot
 
 SYSTEM = (
     "You turn a scheduling request from a call into exactly one calendar event. Resolve relative "
@@ -42,7 +42,9 @@ class EventSpec(BaseModel):
 async def run(task: Task, ctx: RunContext) -> Artifact:
     tz = ZoneInfo(ctx.meeting.timezone)
     now = datetime.now(tz)
-    prompt = f"Now: {now:%A %d %B %Y %H:%M} ({ctx.meeting.timezone}).\nRequest: {task.brief}\nSuggested title: {task.title}"
+    related = describe_inputs(ctx.inputs)
+    prompt = (f"Now: {now:%A %d %B %Y %H:%M} ({ctx.meeting.timezone}).\nRequest: {task.brief}\n"
+              f"Suggested title: {task.title}\nRelated work:\n{related}")
     if ctx.feedback:
         prompt += f"\n\nA reviewer rejected your previous answer: {ctx.feedback}"
     result = await llm.generate(
@@ -74,7 +76,7 @@ async def run(task: Task, ctx: RunContext) -> Artifact:
     existing = ctx.external_id
     invitees = [p.email for p in ctx.meeting.others]
     event_id, link = await ctx.write_external(
-        lambda current: calendar.set_event(current, spec.title, start, end, task.brief, invitees)
+        lambda current: calendar.set_event(current, spec.title, start, end, _description(task, ctx), invitees)
     )
     ctx.trace("tool", f"{'Moved the hold to' if existing else 'Created a hold:'} {human_slot(start, end)} ({note})")
     previous = ctx.previous
@@ -115,6 +117,14 @@ async def approve(task: Task, ctx: RunContext) -> tuple[Artifact, str]:
     if calendar.mode() == "links":
         return art, "Opened the invite in Google Calendar; save it there to send"
     return art, f"Invite sent to {', '.join(attendees)}"
+
+
+def _description(task: Task, ctx: RunContext) -> str:
+    """The event's description: what was agreed, plus the work it is about (ticket id and link),
+    so the invite carries the context of the call."""
+    related = describe_inputs(ctx.inputs)
+    text = f"Agreed on a call with Adjourn: {task.brief}"
+    return text if related == "(none)" else f"{text}\n\nAbout:\n{related}"
 
 
 def _aware(value: str, tz: ZoneInfo) -> datetime:

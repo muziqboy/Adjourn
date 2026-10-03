@@ -7,7 +7,7 @@ import time
 from app.core.store import store
 from app.listen import floor as floor_module
 from app.listen.floor import Floor, _parse
-from conftest import run, until
+from conftest import run, task_of, until
 
 
 class FakePage:
@@ -215,10 +215,10 @@ def test_no_voice_approval_for_click_only_types(orch):
     async def body():
         floor, _ = make_floor()
         floor.orch = orch
-        store.put_task(Task(id="t9", type="schedule", title="x", brief="x", status="needs_approval"))
+        store.put_task(Task(id="t9", type="issue", title="x", brief="x", status="needs_approval"))
         floor.apply({"action": "silent", "approve": ["t9"]})
         await asyncio.sleep(0.05)
-        assert store.tasks["t9"].status == "needs_approval"  # schedule needs the click
+        assert store.tasks["t9"].status == "needs_approval"  # GitHub issues need the click
 
     run(body())
 
@@ -236,5 +236,36 @@ def test_task_news_waits_for_a_lull(orch, monkeypatch):
         assert page.sent == []  # no interruption
         floor.on_speech("Jany", False)
         await until(lambda: any("Shall I create it" in m.get("text", "") for m in page.sent), timeout=5)
+
+    run(body())
+
+
+def test_meeting_about_a_ticket_picks_up_its_identifier(orch):
+    """Book a meeting while the ticket is a draft; once the ticket is created, the same event's
+    description gets the ticket's identifier and link."""
+    from datetime import datetime, timedelta
+
+    from app.agents.schedule import schedule_brief
+    from app.core.config import settings
+    from app.core.contract import Op
+    from app.integrations import calendar, linear
+
+    settings.agents = ["linear", "schedule"]
+    linear.fake.reset()
+
+    async def body():
+        when = (datetime.now().astimezone() + timedelta(days=4)).replace(hour=14, minute=0, second=0, microsecond=0)
+        orch.apply([Op(op="create", type="linear", title="Onboarding copy",
+                       brief="Create a Linear ticket: onboarding copy. Assign it to Bea <demo-b@gmail.com>."),
+                    Op(op="create", type="schedule", title="Review the onboarding ticket",
+                       brief=schedule_brief("Bea", when, settings.timezone), depends_on=["#0"])])
+        ticket, meeting = task_of("linear"), task_of("schedule")
+        await until(lambda: ticket.status == "needs_approval" and meeting.status == "needs_approval", timeout=10)
+        event_id = meeting.artifact.external_id
+        assert "draft, not created yet" in calendar.fake.events[event_id]["description"]
+        await orch.approve(ticket.id)
+        await until(lambda: meeting.revision == 2 and meeting.status == "needs_approval", timeout=10)
+        description = calendar.fake.events[event_id]["description"]
+        assert ticket.artifact.external_id in description and list(calendar.fake.events) == [event_id]
 
     run(body())
