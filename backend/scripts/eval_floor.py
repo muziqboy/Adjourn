@@ -6,6 +6,7 @@ Prints each situation, the decision, what it would say, and the decision time.
 
 import asyncio
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -17,10 +18,23 @@ from app.core.contract import Artifact, MeetingContext, Person, Task  # noqa: E4
 from app.core.store import store  # noqa: E402
 from app.listen.floor import EVENT, Floor  # noqa: E402
 
-PEOPLE = MeetingContext(me=Person(name="Kaleb Girmay", email="kaleb@example.com"),
-                        others=[Person(name="Jany Koulen", email="jany@example.com"), Person(name="Sara Lind", email="")])
+PEOPLE = MeetingContext(me=Person(name="Kaleb Girmay", email=""),  # Meet does not share emails
+                        others=[Person(name="Jany Koulen", email="jany@example.com"), Person(name="Sara Lind", email=""),
+                                Person(name="Star Developer 6482", email="")])
 DRAFT = Task(id="t3", type="linear", title="Onboarding copy", brief="Create a Linear ticket: rewrite the onboarding copy. Assign it to Jany Koulen <jany@example.com>.",
              status="needs_approval", artifact=Artifact(kind="issue", title="Rewrite the onboarding copy", body="...", to=["jany@example.com"]))
+
+TICKET = Task(id="t3", type="linear", title="Onboarding copy", brief="Create a Linear ticket: rewrite the onboarding copy. Assign it to Jany Koulen <jany@example.com>.",
+              status="done", artifact=Artifact(kind="issue", title="Rewrite the onboarding copy", body="...", to=["jany@example.com"],
+                                               external_id="MEE-7", link="https://linear.app/meetagent/issue/MEE-7", delivered=True))
+HOLD = Task(id="t4", type="schedule", title="Review MEE-7: onboarding copy", depends_on=["t3"], status="needs_approval",
+            brief="Book a 30-minute meeting with Kaleb Girmay and Jany Koulen on Tuesday 13 October 2026 at 14:00 Europe/Stockholm to go through Linear ticket MEE-7.",
+            artifact=Artifact(kind="event", title="Review MEE-7: onboarding copy", start="2026-10-13T14:00:00+02:00", end="2026-10-13T14:30:00+02:00", external_id="evt_1"))
+
+
+def _schedule_op(d):
+    return next((t for t in d["tasks"] if t.get("op") == "create" and t.get("type") == "schedule"), None)
+
 
 # work cases: (name, check(decision) -> bool, [(speaker, text)], tasks)
 WORK = [
@@ -39,7 +53,24 @@ WORK = [
      [("Kaleb Girmay", "Adjourn, is the onboarding ticket created in Linear yet?")], [DRAFT]),
     ("drop draft", lambda d: d["dismiss"] == ["t3"] and not d["approve"],
      [("Kaleb Girmay", "Adjourn, scrap that onboarding ticket, we don't need it.")], [DRAFT]),
-    ("memory", lambda d: d["action"] == "speak" and "800" in d["say"].replace(",", "").replace(" ms", "") + d["say"],
+    ("meeting about ticket, no day", lambda d: (d["action"] == "speak" and "?" in d["say"]) or (_schedule_op(d) and "t3" in (_schedule_op(d).get("depends_on") or [])),
+     [("Kaleb Girmay", "Great. Adjourn, let's set up a meeting next week to go through that ticket.")], [TICKET]),
+    ("agreed slot books it", lambda d: _schedule_op(d) and "t3" in (_schedule_op(d).get("depends_on") or []) and re.search(r"13 October|2026-10-13|October 13", _schedule_op(d).get("brief", "")) and "fourteen" not in d["say"].lower(),
+     [("Kaleb Girmay", "Adjourn, let's set up a meeting next week to go through that ticket."),
+      ("You", "How about Tuesday 13 October at 14:00 for half an hour?"), ("Kaleb Girmay", "Yes, that works.")], [TICKET]),
+    ("hold ready asks to invite", lambda d: d["action"] == "speak" and "?" in d["say"] and "invite" in d["say"].lower() and not d["approve"],
+     [(EVENT, "Draft ready, WAITING FOR APPROVAL (voice OK): t4 schedule \u201cReview MEE-7: onboarding copy\u201d")], [TICKET, HOLD]),
+    ("yes sends invite", lambda d: d["approve"] == ["t4"],
+     [("You", "The hold for Tuesday at two is in the calendar. Shall I send the invite to Jany?"), ("Kaleb Girmay", "Yes please, send it.")], [TICKET, HOLD]),
+    ("no invented email", lambda d: any(t.get("op") == "create" for t in d["tasks"]) and not any(re.search(r"kaleb[\w.]*@|sara[\w.]*@", t.get("brief", ""), re.I) for t in d["tasks"]),
+     [("Kaleb Girmay", "Adjourn, make a Linear ticket for the pricing page and assign it to me.")], []),
+    ("email said aloud", lambda d: any(c.get("email", "").lower() == "rahulmehta21@example.org" for c in d.get("contacts", [])),
+     [("You", "What's your email address, Star?"), ("Star Developer 6482", "It's rahul mehta 21 at example dot org.")], []),
+    ("own words on yes", lambda d: d["approve"] == ["t3"] and "please go ahead" not in d["say"].lower(),
+     [("You", "The Linear ticket for the onboarding copy is drafted for Jany. Shall I create it?"), ("Kaleb Girmay", "Yes, please go ahead.")], [DRAFT]),
+    ("garbled name", lambda d: any(t.get("op") == "update" and "jany" in t.get("brief", "").lower() for t in d["tasks"]),
+     [("Kaleb Girmay", "Adjourn, actually give that ticket to Johnny instead.")], [DRAFT.model_copy(update={"brief": "Create a Linear ticket: rewrite the onboarding copy. Assign it to Sara Lind."})]),
+    ("memory", lambda d: d["action"] == "speak" and re.search(r"800|eight hundred", d["say"].replace(",", ""), re.I),
      [("Kaleb Girmay", "Our search p95 is around 800 milliseconds this week.")]
      + [("Jany Koulen" if i % 2 else "Kaleb Girmay", f"Some unrelated discussion about the roadmap, point {i}.") for i in range(40)]
      + [("Kaleb Girmay", "Adjourn, what did I say our search p95 was earlier?")], []),
@@ -114,7 +145,7 @@ async def main() -> None:
         decision = await floor.decide()
         ok = bool(check(decision))
         wpassed += ok
-        extra = {k: decision[k] for k in ("tasks", "approve", "dismiss") if decision[k]}
+        extra = {k: decision[k] for k in ("tasks", "approve", "dismiss", "contacts") if decision.get(k)}
         print(f"{'PASS' if ok else 'FAIL'} {time.time() - start:4.1f}s  {name:20} -> {decision['action']:6} {decision['say'][:80]!r} {json.dumps(extra)[:160]}")
         if not ok:
             print(f"       reason: {decision.get('reason')}")

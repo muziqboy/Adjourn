@@ -7,7 +7,7 @@ import time
 from app.core.store import store
 from app.listen import floor as floor_module
 from app.listen.floor import Floor, _parse
-from conftest import run, until
+from conftest import run, task_of, until
 
 
 class FakePage:
@@ -94,9 +94,9 @@ def test_speech_events_drive_turn_taking(orch, monkeypatch):
         floor.on_speech("Kaleb", False)
         await until(lambda: "say" in kinds(page))
 
-        floor.on_speech("Sara", True)  # Sara talks over Adjourn
+        floor.on_speech("Sara", True)  # Sara talks over Adjourn...
+        await until(lambda: kinds(page)[-1] == "stop")  # ...and keeps talking: it stops
         assert not floor.speaking
-        await until(lambda: kinds(page)[-1] == "stop")
 
     run(body())
 
@@ -215,10 +215,10 @@ def test_no_voice_approval_for_click_only_types(orch):
     async def body():
         floor, _ = make_floor()
         floor.orch = orch
-        store.put_task(Task(id="t9", type="schedule", title="x", brief="x", status="needs_approval"))
+        store.put_task(Task(id="t9", type="issue", title="x", brief="x", status="needs_approval"))
         floor.apply({"action": "silent", "approve": ["t9"]})
         await asyncio.sleep(0.05)
-        assert store.tasks["t9"].status == "needs_approval"  # schedule needs the click
+        assert store.tasks["t9"].status == "needs_approval"  # GitHub issues need the click
 
     run(body())
 
@@ -238,3 +238,135 @@ def test_task_news_waits_for_a_lull(orch, monkeypatch):
         await until(lambda: any("Shall I create it" in m.get("text", "") for m in page.sent), timeout=5)
 
     run(body())
+
+
+def test_meeting_about_a_ticket_picks_up_its_identifier(orch):
+    """Book a meeting while the ticket is a draft; once the ticket is created, the same event's
+    description gets the ticket's identifier and link."""
+    from datetime import datetime, timedelta
+
+    from app.agents.schedule import schedule_brief
+    from app.core.config import settings
+    from app.core.contract import Op
+    from app.integrations import calendar, linear
+
+    settings.agents = ["linear", "schedule"]
+    linear.fake.reset()
+
+    async def body():
+        when = (datetime.now().astimezone() + timedelta(days=4)).replace(hour=14, minute=0, second=0, microsecond=0)
+        orch.apply([Op(op="create", type="linear", title="Onboarding copy",
+                       brief="Create a Linear ticket: onboarding copy. Assign it to Bea <demo-b@gmail.com>."),
+                    Op(op="create", type="schedule", title="Review the onboarding ticket",
+                       brief=schedule_brief("Bea", when, settings.timezone), depends_on=["#0"])])
+        ticket, meeting = task_of("linear"), task_of("schedule")
+        await until(lambda: ticket.status == "needs_approval" and meeting.status == "needs_approval", timeout=10)
+        event_id = meeting.artifact.external_id
+        assert "draft, not created yet" in calendar.fake.events[event_id]["description"]
+        await orch.approve(ticket.id)
+        await until(lambda: meeting.revision == 2 and meeting.status == "needs_approval", timeout=10)
+        description = calendar.fake.events[event_id]["description"]
+        assert ticket.artifact.external_id in description and list(calendar.fake.events) == [event_id]
+
+    run(body())
+
+
+def test_a_cough_does_not_stop_it(orch, monkeypatch):
+    monkeypatch.setattr(floor_module, "BARGE_IN_HOLD_S", 0.2)
+
+    async def body():
+        floor, page = make_floor()
+        floor.apply({"action": "speak", "say": "Redis helps if many searches repeat."})
+        floor.on_speech("Sara", True)  # a cough...
+        floor.on_speech("Sara", False)  # ...over in a moment
+        await asyncio.sleep(0.4)
+        assert floor.speaking and "stop" not in kinds(page)
+
+    run(body())
+
+
+def test_invites_go_to_the_people_named_and_never_to_nobody(orch):
+    from app.agents import schedule
+    from app.core.contract import MeetingContext, Person, Task
+
+    store.meeting = MeetingContext(me=Person(name="Kaleb Girmay", email="kaleb@x.se"),
+                                   others=[Person(name="Jany Koulen", email="jany@x.se"), Person(name="Star Developer", email="")])
+
+    class Ctx:
+        meeting = store.meeting
+
+    task = Task(id="t1", type="schedule", title="x", brief="Meet Jany Koulen on Tuesday at two.")
+    assert schedule.invitees(task, Ctx) == (["jany@x.se"], [])
+    task.brief = "Meet with everyone, and chinmay@x.se, on Tuesday."
+    assert schedule.invitees(task, Ctx) == (["jany@x.se", "chinmay@x.se"], ["Star Developer"])
+    task.brief = "Meet Star Developer on Tuesday."
+    assert schedule.invitees(task, Ctx) == ([], ["Star Developer"])
+
+    async def body():
+        task.artifact = __import__("app.core.contract", fromlist=["Artifact"]).Artifact(kind="event", external_id="e1")
+        try:
+            await schedule.approve(task, Ctx)
+            raise AssertionError("an invite to nobody must fail")
+        except RuntimeError as exc:
+            assert "Nobody to invite" in str(exc) and "Star Developer" in str(exc)
+
+    run(body())
+
+
+def test_a_yes_said_too_early_is_kept_and_an_email_said_aloud_is_recorded(orch, monkeypatch):
+    from app.core.config import settings
+    from app.core.contract import Task
+
+    async def body():
+        floor, page = make_floor()
+        floor.orch = orch
+        store.task_listeners.append(floor.on_task)
+        store.put_task(Task(id="t7", type="linear", title="x", brief="x", status="running"))
+        floor.apply({"action": "speak", "say": "Will do.", "approve": ["t7"],
+                     "contacts": [{"name": "Chinmay", "email": "rahulmehta21@example.org"}]})
+        assert "t7" in floor._pending_yes  # not refused, not lost
+        assert any(p.name == "Chinmay" and p.email == "rahulmehta21@example.org" for p in store.meeting.others)
+        approved = []
+
+        async def fake_approve(task_id):
+            approved.append(task_id)
+
+        monkeypatch.setattr(orch, "approve", fake_approve)
+        task = store.tasks["t7"]
+        task.status = "needs_approval"
+        store.put_task(task)  # the draft becomes ready
+        await until(lambda: approved == ["t7"])
+        store.task_listeners.clear()
+
+    run(body())
+
+
+def test_it_does_not_hear_itself(orch):
+    async def body():
+        floor, page = make_floor()
+        floor.apply({"action": "speak", "say": "The hold for Tuesday at two is in the calendar. Shall I send the invite?"})
+        # Meet credits its voice to nobody, mid-sentence
+        assert floor.is_adjourn(None, "The hold for Tuesday")
+        assert floor.is_adjourn("Unknown", "is in the calendar")
+        floor.spoken()
+        # garbled and credited to a person, a moment later
+        assert floor.is_adjourn("Kaleb Girmay", "the hold for tuesday at 2 is in the calendar shall i send")
+        # a real reply right after is heard
+        assert not floor.is_adjourn("Kaleb Girmay", "Yes, send it to Jany.")
+        floor.last_spoke_at -= 10
+        assert not floor.is_adjourn(None, "Okay so where were we")  # long after: unnamed is not it
+
+    run(body())
+
+
+def test_company_directory_and_everyones_calendar():
+    from datetime import date
+
+    from app.core import company
+
+    assert company.find("Jany")["role"].startswith("Lead engineer")
+    assert company.email_for("Chinmay") == "chinmay.pant@meetagent.example"
+    tuesday = date(2026, 10, 6)  # Jany: Architecture review 13-15, Chinmay: partner call 10-12
+    free = company.common_free(["Jany Koulen", "Chinmay Pant"], tuesday)
+    assert not any(s.hour == 13 for s, _ in free) and any(s.hour == 15 for s, _ in free)
+    assert "Meetagent AB" in company.briefing()

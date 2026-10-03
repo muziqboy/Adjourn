@@ -1,0 +1,7 @@
+{
+  "_comment": "Copy to fixtures/company.local.json (git-ignored) and put the real people of your calls here: their real emails, and the names Meet shows for them (aliases). Merged over fixtures/company.json by name.",
+  "people": [
+    {"name": "Kaleb Girmay", "email": "you@example.com", "aliases": ["Kaleb"]},
+    {"name": "Jany Koulen", "email": "colleague@example.com", "aliases": ["Jany", "Johnny"]}
+  ]
+}

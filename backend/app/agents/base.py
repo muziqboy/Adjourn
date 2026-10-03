@@ -155,7 +155,12 @@ def describe_inputs(inputs: dict[str, Task]) -> str:
             slot = human_slot(datetime.fromisoformat(art.start), datetime.fromisoformat(art.end))
             parts.append(f"Booked meeting '{art.title}': {slot}")
         elif art.kind == "issue":
-            parts.append(f"GitHub issue '{art.title}'" + (f": {art.link}" if art.external_id else " (draft)"))
+            what = "Linear ticket" if upstream.type == "linear" else "GitHub issue"
+            ident = f" {art.external_id}" if art.external_id else " (draft, not created yet)"
+            who = f", assigned to {', '.join(art.to)}" if art.to else ""
+            link = f": {art.link}" if art.external_id and art.link else ""
+            summary = f"\n{(art.body or '')[:300]}" if art.body else ""
+            parts.append(f"{what}{ident} '{art.title}'{who}{link}{summary}")
         elif art.kind == "draft":
             parts.append(f"Email draft '{art.subject}' to {', '.join(art.to)}")
     return "\n\n".join(parts) or "(none)"

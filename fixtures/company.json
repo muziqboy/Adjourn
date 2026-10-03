@@ -1,0 +1,85 @@
+{
+  "_comment": "SYNTHETIC company data, made up so Adjourn has context to work with in demos (app/core/company.py). Real people and their real emails go in fixtures/company.local.json (git-ignored), which is merged over this file.",
+  "name": "Meetagent AB",
+  "location": "Stockholm, Sweden",
+  "timezone": "Europe/Stockholm",
+  "about": "Meetagent builds Adjourn, an AI teammate that joins video calls, answers questions and does the follow-ups (tickets, meetings, emails) before the call ends. B2B SaaS, sold per seat to product and engineering teams.",
+  "stage": "Seed (SEK 22M raised in March 2026), 14 people",
+  "product": {
+    "plans": [
+      {"name": "Team", "price": "EUR 18 per seat per month"},
+      {"name": "Business", "price": "EUR 32 per seat per month, with SSO and admin controls"}
+    ],
+    "integrations": ["Google Meet", "Google Calendar", "Gmail", "Linear", "GitHub", "Slack (beta)"]
+  },
+  "metrics": {
+    "paying_customers": 41,
+    "seats": 1180,
+    "mrr": "EUR 26,400",
+    "net_revenue_retention": "118%",
+    "search_api_p95_latency": "800 ms (target: under 200 ms by end of Q4)",
+    "onboarding_completion": "54% of new workspaces finish onboarding (target 70%)",
+    "weekly_active_calls": 3900
+  },
+  "customers": [
+    {"name": "Klarvik Logistics", "plan": "Business", "seats": 210, "note": "largest account; renewal in January; asked for Teams support"},
+    {"name": "Nordhav Energy", "plan": "Business", "seats": 160, "note": "pilot in Hamburg office"},
+    {"name": "Pixelbrunn", "plan": "Team", "seats": 45, "note": "complained about search being slow"},
+    {"name": "Solvind Health", "plan": "Business", "seats": 120, "note": "security review passed in September"}
+  ],
+  "roadmap": [
+    {"quarter": "Q4 2026", "items": ["Search under 200 ms p95 (Redis cache in front of search)", "Onboarding rewrite to reach 70% completion", "Microsoft Teams support (beta)"]},
+    {"quarter": "Q1 2027", "items": ["Chinese market entry: localization, local payments, data residency", "Slack integration GA"]}
+  ],
+  "projects": [
+    {"name": "Search performance", "owner": "Jany Koulen", "status": "in progress", "linear_team": "Meetagent"},
+    {"name": "Onboarding rewrite", "owner": "Sofia Lindqvist", "status": "design review", "linear_team": "Meetagent"},
+    {"name": "Chinese market entry", "owner": "Kaleb Girmay", "status": "exploring", "linear_team": "Meetagent"},
+    {"name": "Teams support", "owner": "Erik Holm", "status": "not started", "linear_team": "Meetagent"}
+  ],
+  "decisions": [
+    "Sept 2026: stay on Postgres; add Redis only as a cache, not as a primary store.",
+    "Sept 2026: no new features in December (code freeze 14 Dec - 6 Jan).",
+    "Aug 2026: China entry needs a local partner for payments; Alipay and WeChat Pay are the priority."
+  ],
+  "working_hours": "09:00-17:00, lunch 12:00-13:00, no meetings on Friday afternoons",
+  "people": [
+    {
+      "name": "Kaleb Girmay", "role": "CEO, leads China entry", "email": "kaleb.girmay@meetagent.example",
+      "busy": [
+        {"days": "Mon", "from": "09:00", "to": "10:00", "what": "Leadership sync"},
+        {"days": "Tue Thu", "from": "10:00", "to": "11:30", "what": "Investor and customer calls"},
+        {"days": "Wed", "from": "13:00", "to": "15:00", "what": "Hiring interviews"}
+      ]
+    },
+    {
+      "name": "Jany Koulen", "role": "Lead engineer, owns search performance", "email": "jany.koulen@meetagent.example",
+      "busy": [
+        {"days": "Mon", "from": "09:00", "to": "10:00", "what": "Leadership sync"},
+        {"days": "Mon Wed Fri", "from": "09:30", "to": "09:45", "what": "Engineering standup"},
+        {"days": "Tue", "from": "13:00", "to": "15:00", "what": "Architecture review"},
+        {"days": "Thu", "from": "14:00", "to": "16:00", "what": "Focus block (no meetings)"}
+      ]
+    },
+    {
+      "name": "Chinmay Pant", "role": "Full-stack engineer, localization and payments", "email": "chinmay.pant@meetagent.example",
+      "busy": [
+        {"days": "Mon Wed Fri", "from": "09:30", "to": "09:45", "what": "Engineering standup"},
+        {"days": "Tue", "from": "10:00", "to": "12:00", "what": "Payments partner call"},
+        {"days": "Wed", "from": "14:00", "to": "16:00", "what": "Focus block"}
+      ]
+    },
+    {
+      "name": "Sofia Lindqvist", "role": "Product designer, onboarding", "email": "sofia.lindqvist@meetagent.example",
+      "busy": [
+        {"days": "Tue Thu", "from": "13:00", "to": "14:00", "what": "User interviews"}
+      ]
+    },
+    {
+      "name": "Erik Holm", "role": "Head of sales", "email": "erik.holm@meetagent.example",
+      "busy": [
+        {"days": "Mon Tue Wed Thu", "from": "14:00", "to": "16:00", "what": "Customer demos"}
+      ]
+    }
+  ]
+}

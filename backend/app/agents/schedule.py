@@ -22,7 +22,7 @@ from .. import llm
 from ..core.config import settings
 from ..core.contract import Artifact, Op, Task
 from ..integrations import calendar
-from .base import AgentSpec, MockIntent, RunContext, human_slot
+from .base import AgentSpec, MockIntent, RunContext, describe_inputs, human_slot
 
 SYSTEM = (
     "You turn a scheduling request from a call into exactly one calendar event. Resolve relative "
@@ -42,7 +42,9 @@ class EventSpec(BaseModel):
 async def run(task: Task, ctx: RunContext) -> Artifact:
     tz = ZoneInfo(ctx.meeting.timezone)
     now = datetime.now(tz)
-    prompt = f"Now: {now:%A %d %B %Y %H:%M} ({ctx.meeting.timezone}).\nRequest: {task.brief}\nSuggested title: {task.title}"
+    related = describe_inputs(ctx.inputs)
+    prompt = (f"Now: {now:%A %d %B %Y %H:%M} ({ctx.meeting.timezone}).\nRequest: {task.brief}\n"
+              f"Suggested title: {task.title}\nRelated work:\n{related}")
     if ctx.feedback:
         prompt += f"\n\nA reviewer rejected your previous answer: {ctx.feedback}"
     result = await llm.generate(
@@ -58,23 +60,30 @@ async def run(task: Task, ctx: RunContext) -> Artifact:
     day_start = datetime.combine(start.date(), DAY_START, start.tzinfo)
     day_end = datetime.combine(start.date(), DAY_END, start.tzinfo)
     busy = await calendar.get_busy(day_start, day_end, exclude_id=ctx.external_id)
+    # everyone's time, not only the organiser's: the team calendars from the company directory
+    team = _team_busy(task, ctx, day_start, day_end)
     if busy is None:
-        note = "no busy check (links mode)"
+        note = "no busy check on your calendar (links mode)"
+        busy = []
     else:
-        ctx.trace("tool", f"Checked calendar: {len(busy)} other events that day")
+        ctx.trace("tool", f"Checked your calendar: {len(busy)} other events that day")
         note = "no conflicts"
-        if _overlaps(start, end, busy):
-            free = _nearest_free(start, end, busy, now)
-            if free is None:
-                note = f"{start:%H:%M} is taken and the day is full"
-            else:
-                note = f"{start:%H:%M} was taken, moved to {free:%H:%M}"
-                start, end = free, free + (end - start)
+    if team:
+        ctx.trace("tool", "Team calendars: " + "; ".join(f"{s:%H:%M}-{e:%H:%M} {what}" for s, e, what in team[:6]))
+    everyone = busy + [(s, e) for s, e, _ in team]
+    if _overlaps(start, end, everyone):
+        clash = next((what for s, e, what in team if s < end and e > start), "your calendar")
+        free = _nearest_free(start, end, everyone, now)
+        if free is None:
+            note = f"{start:%H:%M} is taken ({clash}) and the day is full"
+        else:
+            note = f"{start:%H:%M} was taken ({clash}), moved to {free:%H:%M}"
+            start, end = free, free + (end - start)
 
     existing = ctx.external_id
     invitees = [p.email for p in ctx.meeting.others]
     event_id, link = await ctx.write_external(
-        lambda current: calendar.set_event(current, spec.title, start, end, task.brief, invitees)
+        lambda current: calendar.set_event(current, spec.title, start, end, _description(task, ctx), invitees)
     )
     ctx.trace("tool", f"{'Moved the hold to' if existing else 'Created a hold:'} {human_slot(start, end)} ({note})")
     previous = ctx.previous
@@ -101,20 +110,62 @@ async def verify(task: Task, art: Artifact, ctx: RunContext) -> list[str]:
     busy = await calendar.get_busy(start, end, exclude_id=art.external_id)
     if busy:
         problems.append("The slot is not free in the calendar.")
+    clashes = _team_busy(task, ctx, start, end)
+    if clashes:
+        problems.append(f"Someone is busy then: {clashes[0][2]}.")
     if not problems:
         ctx.trace("verify", "✓ future, 15 min–2 h, participants only" + (", slot free" if busy is not None else ""))
     return problems
 
 
+def _team_busy(task: Task, ctx: RunContext, start: datetime, end: datetime) -> list:
+    """Busy blocks of the organiser and the invitees from the company directory's calendars."""
+    from ..core import company
+
+    emails, _ = invitees(task, ctx)
+    who = [ctx.meeting.me.email or ctx.meeting.me.name, *emails]
+    blocks = []
+    for person in who:
+        if person:
+            blocks += company.busy(person, start, end)
+    return sorted(blocks)
+
+
+def invitees(task: Task, ctx: RunContext) -> tuple[list[str], list[str]]:
+    """(emails to invite, names without an email). The people the brief names, or everyone else
+    in the call if it names nobody; plus any email written in the brief. Never the organiser."""
+    brief = task.brief.lower()
+    me = ctx.meeting.me.email.lower()
+    named = [p for p in ctx.meeting.others if p.name and p.name.split()[0].lower() in brief]
+    people = named or list(ctx.meeting.others)
+    emails = [p.email for p in people if p.email]
+    emails += [e for e in re.findall(r"[\w.+-]+@[\w-]+\.[\w.]+", task.brief) if e.lower() not in {x.lower() for x in emails}]
+    emails = [e for e in emails if e.lower() != me]
+    missing = [p.name for p in people if not p.email]
+    return emails, missing
+
+
 async def approve(task: Task, ctx: RunContext) -> tuple[Artifact, str]:
-    attendees = [p.email for p in ctx.meeting.others if p.email]  # Meet does not always share emails
+    attendees, missing = invitees(task, ctx)
+    if not attendees:
+        raise RuntimeError("Nobody to invite: no email known for "
+                           + (", ".join(missing) if missing else "anyone in the brief") + ". Ask for their email.")
     lock = ctx.orch.locks.setdefault(task.id, asyncio.Lock())
     async with lock:  # never invite while a revision is still moving the event
         await calendar.invite(ctx.external_id, attendees)
     art = task.artifact.model_copy(update={"attendees": attendees})
     if calendar.mode() == "links":
         return art, "Opened the invite in Google Calendar; save it there to send"
-    return art, f"Invite sent to {', '.join(attendees)}"
+    note = f" (no email for {', '.join(missing)})" if missing else ""
+    return art, f"Invite sent to {', '.join(attendees)}{note}"
+
+
+def _description(task: Task, ctx: RunContext) -> str:
+    """The event's description: what was agreed, plus the work it is about (ticket id and link),
+    so the invite carries the context of the call."""
+    related = describe_inputs(ctx.inputs)
+    text = f"Agreed on a call with Adjourn: {task.brief}"
+    return text if related == "(none)" else f"{text}\n\nAbout:\n{related}"
 
 
 def _aware(value: str, tz: ZoneInfo) -> datetime:

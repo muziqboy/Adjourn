@@ -12,6 +12,7 @@ pause, what Adjourn says AND what work it starts, changes, approves or drops.
          "tasks":   [Op, ...]   create / update work for the agents (Linear, GitHub, calendar...)
          "approve": [task id]   a participant clearly said yes to that waiting draft (voice approval)
          "dismiss": [task id]   they dropped it
+         "contacts": [{name, email}]  emails people said aloud, recorded for invites
          "reason"}
 
     speak       -> {"type": "say", "text"} to the voice page (Gemini Live says it verbatim)
@@ -53,6 +54,8 @@ QUIET_OPEN_S = 1.1  # longer after a fragment that does not end a sentence (Meet
 AFTER_SPEECH_S = 0.3  # sooner when speech_off says the last speaker stopped
 PAUSE_NAMED_S = 0.4  # sooner when Adjourn's name was just heard
 TALKING_STALE_S = 6.0  # a speech_on without speech_off for this long is ignored
+ECHO_WINDOW_S = 2.5  # unnamed captions this soon after Adjourn spoke are its own voice coming back
+BARGE_IN_HOLD_S = 0.6  # a person must keep talking this long to stop Adjourn (a cough or a blip does not)
 BARGE_IN_WORDS = 2  # without speech events: this many caption words while Adjourn talks stops it
 EVENT_QUIET_S = 2.5  # task news (draft ready, created) waits for a lull this long: no interrupting
 EVENT_MAX_WAIT_S = 45.0  # ...but not forever: then the mind decides (it raises a hand if still busy)
@@ -77,14 +80,17 @@ SPEAKING ("action")
 - Speak when someone addresses you (by name, or unmistakably, like a follow-up right after you spoke), when your
   hand is up and someone invites you, when you are asked to repeat or continue, and when a task event needs a short
   word from you (a draft is ready for approval, a ticket was created, something failed).
-- Raise your hand when an open question hangs, nobody answers, and you have a confident answer; or someone states
-  a wrong fact that matters for a decision. At most one hand at a time.
+- A question people ask each other or the room (not you by name) is never yours to answer directly: if nobody
+  answers and you have a confident answer, RAISE YOUR HAND. Same when someone states a wrong fact that matters for
+  a decision. At most one hand at a time.
 - Stay silent when people talk to each other, small talk, thinking out loud, someone is mid-sentence or already
   answering, or you are unsure you were addressed. Interrupting is worse than missing a chance.
 - If told to stop, be quiet, or "that's enough": stay silent. Do not even acknowledge it.
 - Like a sharp, friendly colleague: English, answer first, one to three short spoken sentences, first names, round
-  numbers, no lists, URLs, markdown or emoji. Never filler ("I'm here", "ready to assist", "great question"),
-  never talk about yourself or your reasoning, never repeat what was just said. Google Search for facts.
+  numbers, no lists, URLs, markdown or emoji. Times in 12-hour form the way people say them ("two pm", "Tuesday the
+  sixth at two", "four pm"), never digits like "16:00", never "fourteen hundred" or "fourteen hours". Never filler ("I'm here", "ready to assist", "great
+  question"), never talk about yourself or your reasoning. "say" is YOUR line: never repeat or echo what a
+  participant just said ("Yes, please go ahead" is their line, yours is "Creating it now."). Google Search for facts.
 
 WORK ("tasks", "approve", "dismiss")
 Agents do work for the meeting:
@@ -92,9 +98,14 @@ Agents do work for the meeting:
 - When someone asks for such work, or the room agrees on it, add a "create" op: type, a short title, and a complete,
   self-contained brief (what, for whom with their name and email from the participants list, when, in absolute
   dates). Then say one short sentence of what you are PREPARING ("I'll draft a Linear ticket for the onboarding copy
-  for Jany."). Never say it is done: work takes time and some needs approval.
+  for Maria."). Never say it is done: work takes time and some needs approval.
 - When they change agreed work (another assignee, title, time), add an "update" op with the task id and the complete
   new brief. Never create a second task for the same thing.
+- Keep context between pieces of work: when new work is about earlier work ("a meeting next week about that
+  ticket"), put the earlier task's id in "depends_on" and name it in the brief, so the meeting carries the ticket.
+- Meetings: resolve dates against "Now" into an absolute weekday, date, time and timezone. If they gave no day or
+  time ("next week"), propose one concrete slot ("How about Tuesday 13 October at 14:00?") and create the task once
+  they agree. The calendar agent first books a private hold; the invite goes out only after a yes (approval).
 - Approval: drafts marked "WAITING FOR APPROVAL (voice OK)" may be approved by voice. When such a draft is ready,
   say what it is in one sentence and ask whether to create it, but only if the room is quiet. If the room is BUSY,
   never interrupt with task news: raise your hand with the point ("The Linear draft for the onboarding copy is
@@ -106,24 +117,48 @@ Agents do work for the meeting:
 - State facts about work only as the task list shows them. A ticket exists only when the list says CREATED with its
   identifier. If something failed, say so plainly.
 
+THE COMPANY (what you know about the company this meeting is in; use it, it is your context)
+{company}
+
+SCHEDULING
+- Propose meeting times from "When everyone in the call is free" below (it already combines their calendars,
+  working hours, lunch and no-meeting Friday afternoons). Pick the earliest window that fits what they asked
+  ("later in the week" = Wednesday to Friday). Say whose calendar ruled out an obvious time if it helps.
+- A proposal is a question: add no schedule task until someone agrees to that time.
+
+PEOPLE AND EMAILS
+- Captions garble names too: match them to the people in the call ("Johnny" may be Jany, "Kaylub" may be Kaleb). Do not invent people.
+- Use emails exactly as the participants list shows them. If someone has no email listed, write their name only:
+  NEVER invent or guess an email (no "name@example.com").
+- Invites go to the people the meeting is for; the task list says who will receive it and whose email is missing.
+  If an email is missing, ask for it before sending.
+- When someone says an email aloud, put it in "contacts" ({{"name", "email"}}). Captions spell it out ("rahul mehta
+  21 at example dot org" = rahulmehta21@example.org). Only then may you say you have it.
+
 EXAMPLES
-Kaleb: Adjourn, would a CDN help our image load times?
--> {{"action": "speak", "say": "Yes, Kaleb. A CDN serves images from servers near your users, so load times usually drop a lot.", "reason": "addressed"}}
-Kaleb: Would Redis help speed up our search API?  Sara: Hmm, I'm not sure.
+Ana: Adjourn, would a CDN help our image load times?
+-> {{"action": "speak", "say": "Yes, Ana. A CDN serves images from servers near your users, so load times usually drop a lot.", "reason": "addressed"}}
+Ana: Would Redis help speed up our search API?  Leo: Hmm, I'm not sure.
 -> {{"action": "raise_hand", "point": "Redis helps if most searches repeat.", "reason": "open question, I know"}}
-Kaleb: Can you make a Linear ticket for the onboarding copy and give it to Jany?
--> {{"action": "speak", "say": "Sure, I'll draft a Linear ticket for the onboarding copy for Jany.", "tasks": [{{"op": "create", "type": "linear", "title": "Onboarding copy", "brief": "Create a Linear ticket: rewrite the onboarding copy. Assign it to Jany Koulen <jany@example.com>."}}], "reason": "asked for a ticket"}}
-—: Draft ready, WAITING FOR APPROVAL (voice OK): t3 linear "Onboarding copy" -> Jany Koulen
--> {{"action": "speak", "say": "The Linear ticket for the onboarding copy is drafted for Jany. Shall I create it?", "reason": "draft ready"}}
-Kaleb: Yes, go ahead.   (t3 is waiting for approval)
+Ana: Can you make a Linear ticket for the onboarding copy and give it to Maria?
+-> {{"action": "speak", "say": "Sure, I'll draft a Linear ticket for the onboarding copy for Maria.", "tasks": [{{"op": "create", "type": "linear", "title": "Onboarding copy", "brief": "Create a Linear ticket: rewrite the onboarding copy. Assign it to Maria Silva <maria.silva@example.org>."}}], "reason": "asked for a ticket"}}
+—: Draft ready, WAITING FOR APPROVAL (voice OK): t3 linear "Onboarding copy" -> Maria Silva
+-> {{"action": "speak", "say": "The Linear ticket for the onboarding copy is drafted for Maria. Shall I create it?", "reason": "draft ready"}}
+Ana: Yes, go ahead.   (t3 is waiting for approval)
 -> {{"action": "speak", "say": "Creating it now.", "approve": ["t3"], "reason": "clear yes"}}
-Jany: Actually, give it to Sara instead.   (t3 is a draft)
--> {{"action": "speak", "say": "Okay, I'll move it to Sara.", "tasks": [{{"op": "update", "id": "t3", "brief": "Create a Linear ticket: rewrite the onboarding copy. Assign it to Sara Lind.", "reason": "reassigned to Sara"}}], "reason": "change"}}
-Kaleb: How was your weekend?  Sara: Good, we went hiking.
+Maria: Actually, give it to Tom instead.   (t3 is a draft)
+-> {{"action": "speak", "say": "Okay, I'll move it to Tom.", "tasks": [{{"op": "update", "id": "t3", "brief": "Create a Linear ticket: rewrite the onboarding copy. Assign it to Tom Berg <tom.berg@example.org>.", "reason": "reassigned to Tom"}}], "reason": "change"}}
+Ana: Let's meet next week to go through that ticket.   (t3 linear "Onboarding copy" is CREATED as MEE-7)
+-> {{"action": "speak", "say": "How about Tuesday 13 October at 14:00 for half an hour?", "reason": "no day given: propose"}}
+Ana: Yes, that works.
+-> {{"action": "speak", "say": "I'll put it in the calendar for Tuesday at two.", "tasks": [{{"op": "create", "type": "schedule", "title": "Review MEE-7: onboarding copy", "brief": "Book a 30-minute meeting with Ana Ruiz and Maria Silva on Tuesday 13 October 2026 at 14:00 Europe/Stockholm to go through Linear ticket MEE-7 (onboarding copy).", "depends_on": ["t3"]}}], "reason": "agreed slot"}}
+—: Draft ready, WAITING FOR APPROVAL (voice OK): t4 schedule "Review MEE-7: onboarding copy"
+-> {{"action": "speak", "say": "The hold for Tuesday at two is in the calendar. Shall I send the invite to Maria?", "reason": "invite needs a yes"}}
+Ana: How was your weekend?  Leo: Good, we went hiking.
 -> {{"action": "silent", "reason": "small talk"}}
 
 Reply with JSON only:
-{{"action": "speak|raise_hand|lower_hand|silent", "say": "...", "point": "...", "tasks": [], "approve": [], "dismiss": [], "reason": "a few words"}}"""
+{{"action": "speak|raise_hand|lower_hand|silent", "say": "...", "point": "...", "tasks": [], "approve": [], "dismiss": [], "contacts": [], "reason": "a few words"}}"""
 
 current: "Floor | None" = None  # set by main.py; listen/bot.py feeds it in live-voice mode
 
@@ -152,6 +187,7 @@ class Floor:
         self._seen_speakers: set[str] = set()
         self._jobs: set[asyncio.Task] = set()
         self._unannounced: dict[str, int] = {}  # voice-OK drafts not yet brought up -> reminders sent
+        self._pending_yes: dict[str, float] = {}  # a yes said while the draft was still being prepared
 
     def active(self) -> bool:
         """Live-voice mode: a voice page is connected, so this mind runs the meeting."""
@@ -160,15 +196,26 @@ class Floor:
     # --- input: who is in the call, who talks, what was said ---
 
     def is_adjourn(self, speaker: str | None, text: str = "") -> bool:
-        """Adjourn's own voice coming back through Meet: by name, or by matching what it just said
-        (the bot's captions do not always carry its name)."""
-        if speaker and speaker.strip().lower().startswith(settings.bot_name.lower()):
+        """Adjourn's own voice coming back through Meet's captions. Meet often credits it to nobody
+        ("Unknown") and words come back garbled, so three signals, any one enough:
+          - the speaker is Adjourn by name;
+          - an unnamed caption while Adjourn is speaking or just finished (ECHO_WINDOW_S);
+          - most of the caption's words are in something Adjourn said a moment ago."""
+        name = (speaker or "").strip().lower()
+        if name.startswith(settings.bot_name.lower()):
+            return True
+        recently_spoke = self.speaking or time.time() - self.last_spoke_at < ECHO_WINDOW_S
+        if name in ("", "unknown", "someone") and recently_spoke:
             return True
         if text:
-            recent = [t for _, _, t, own in list(self.lines)[-6:] if own]
-            words = text.lower()
-            return any(difflib.SequenceMatcher(None, words, r.lower()).ratio() > 0.6
-                       or (len(words) > 20 and words in r.lower()) for r in recent)
+            said = [t for ts, _, t, own in list(self.lines)[-8:] if own and time.time() - ts < 60]
+            words = set(re.findall(r"[a-z0-9']+", text.lower()))
+            for line in said:
+                theirs = set(re.findall(r"[a-z0-9']+", line.lower()))
+                if words and len(words & theirs) / len(words) >= 0.7 and len(words) >= 3:
+                    return True
+                if difflib.SequenceMatcher(None, text.lower(), line.lower()).ratio() > 0.6:
+                    return True
         return False
 
     def on_presence(self, name: str | None, joined: bool) -> None:
@@ -196,13 +243,20 @@ class Floor:
         if talking:
             self.talking[speaker] = time.time()
             if self.speaking:
-                self._send({"type": "stop"})  # a person started talking: Adjourn yields at once
-                self.speaking = False
-                log.info("barge-in by %s", speaker)
+                self._run(self._barge_in_if_sustained(speaker, self.talking[speaker]), "barge-in check")
         else:
             self.talking.pop(speaker, None)
             if not self.someone_talking() and time.time() - self.last_caption_at > AFTER_SPEECH_S:
                 self._schedule(AFTER_SPEECH_S)
+
+    async def _barge_in_if_sustained(self, speaker: str, since: float) -> None:
+        """Stop Adjourn only if the person is still talking BARGE_IN_HOLD_S later: real speech, not
+        a cough or a noisy-microphone blip (both of which cut it off mid-sentence before)."""
+        await asyncio.sleep(BARGE_IN_HOLD_S)
+        if self.speaking and self.talking.get(speaker) == since:
+            self._send({"type": "stop"})
+            self.speaking = False
+            log.info("barge-in by %s", speaker)
 
     def on_caption(self, speaker: str | None, text: str, final: bool) -> None:
         text = " ".join(text.split())
@@ -239,6 +293,12 @@ class Floor:
         before = self._task_status.get(task.id)
         self._task_status[task.id] = task.status
         if before == task.status or not self.active():
+            return
+        if task.status == "needs_approval" and self._pending_yes.pop(task.id, 0) > time.time() - 120:
+            # they already said yes while it was being prepared: do it now, and say so
+            self.store.trace(task.id, "info", "Approved by voice in the meeting (said while it was being prepared)")
+            self._run(self.orch.approve(task.id), f"queued voice approval of {task.id}")
+            self._event(f"Approving now (the yes came while it was being prepared): {self._describe_short(task)}")
             return
         if task.status == "needs_approval":
             how = "voice OK" if task.type in settings.voice_approval else "needs a click"
@@ -317,8 +377,15 @@ class Floor:
                 if art.note:
                     line += f" | Note: {art.note[:120]}"
             elif art.kind == "event" and art.start:
+                from ..agents.schedule import invitees
+
                 start = datetime.fromisoformat(art.start)
                 line += f" | {start:%a %d %b %H:%M}" + (" | invite sent" if art.delivered else " | hold only")
+                if self.store.meeting is not None:
+                    emails, missing = invitees(task, _Ctx(self.store.meeting))
+                    line += f" | invite goes to: {', '.join(emails) or 'NOBODY'}"
+                    if missing:
+                        line += f" | no email for: {', '.join(missing)}"
             elif art.content:
                 line += f" | {art.content[:300]}"
         if task.review:
@@ -344,9 +411,13 @@ class Floor:
         spoke = (f"You last spoke {int(now - self.last_spoke_at)} s ago." if self.last_spoke_at else "You have not spoken yet.")
         quiet = int(now - self.last_caption_at) if self.last_caption_at else 0
         room = ("BUSY: people are talking" if self.room_busy() else f"quiet for {quiet} s")
+        from ..core import company
+
+        free = company.availability(sorted(names), datetime.now().astimezone())
         return (
             f"Now: {datetime.now().astimezone():%A %d %B %Y %H:%M %Z}.\n"
             f"People in the call ({len(names)}):\n{roster}\n\n"
+            f"When everyone in the call is free:\n{free}\n\n"
             f"Work in this meeting:\n" + ("\n".join(self._describe(t) for t in tasks) or "(none yet)") + "\n\n"
             f"Your hand: {'RAISED, point: ' + self.hand if self.hand else 'down'}. {spoke} Room: {room}.\n\n"
             f"Transcript (oldest first; '>>' marks what is new since your last decision):\n" + "\n".join(transcript)
@@ -354,8 +425,10 @@ class Floor:
         )
 
     def system(self) -> str:
+        from ..core import company
+
         docs = "\n".join(f"- {spec.type}: {spec.intent_doc}" for spec in agents.enabled() if spec.type not in ("answer", "research"))
-        return SYSTEM.format(agents=docs or "- (none enabled)")
+        return SYSTEM.format(agents=docs or "- (none enabled)", company=company.briefing())
 
     # --- the decision ---
 
@@ -426,10 +499,20 @@ class Floor:
             self.store.ensure_meeting()
             log.info("floor ops: %s", [op.model_dump(exclude_defaults=True) for op in ops])
             self.orch.apply(ops)
+        for contact in decision.get("contacts") or []:
+            if isinstance(contact, dict) and contact.get("name") and "@" in str(contact.get("email", "")):
+                self.store.add_participant(contact["name"], contact["email"])
+                self.store.attendee_emails[contact["name"].lower()] = contact["email"]
+                log.info("floor: recorded email for %s", contact["name"])
         for task_id in decision.get("approve") or []:
             task = self.store.tasks.get(task_id)
+            if task is not None and task.type in settings.voice_approval and task.status in ("detected", "blocked", "running", "verifying"):
+                self._pending_yes[task_id] = time.time()  # applied when the draft is ready (on_task)
+                self._event(f"Your yes for {task_id} is noted: it is still being prepared and will be done when ready.", decide=False)
+                continue
             if task is None or task.status != "needs_approval" or task.type not in settings.voice_approval:
                 log.info("floor: approval of %s refused (%s)", task_id, task.status if task else "unknown task")
+                self._event(f"Could not approve {task_id}: it is {task.status if task else 'unknown'}.", decide=False)
                 continue
             self.store.trace(task_id, "info", "Approved by voice in the meeting")
             self._run(self.orch.approve(task_id), f"voice approval of {task_id}")
@@ -466,9 +549,17 @@ class Floor:
         self.hand, self.speaking, self.last_spoke_at, self.new_since_decision = None, False, 0.0, 0
         self.new_human_lines, self._event_since = 0, 0.0
         self._unannounced.clear()
+        self._pending_yes.clear()
         self.talking.clear()
         self.present.clear()
         self._task_status.clear()
+
+
+class _Ctx:
+    """The little the invitee rule needs from a run context."""
+
+    def __init__(self, meeting) -> None:
+        self.meeting = meeting
 
 
 async def _safe_send(ws, message: dict) -> None:
@@ -492,6 +583,7 @@ def _parse(text: str) -> dict:
         "tasks": [t for t in as_list(data.get("tasks")) if isinstance(t, dict)],
         "approve": [str(t) for t in as_list(data.get("approve"))],
         "dismiss": [str(t) for t in as_list(data.get("dismiss"))],
+        "contacts": [c for c in as_list(data.get("contacts")) if isinstance(c, dict)],
         "reason": data.get("reason", ""),
     }
 

@@ -175,6 +175,7 @@ function gatedText(text) {
 
 // ---- Gemini Live as a voice: text in, speech out ----
 let session = null, said = "";
+let pendingLine = null;  // the line being said when the voice connection dropped: said again on reconnect
 async function connectVoice() {
   const info = await fetch(`/voice/session?token=${token}`, { method: "POST" }).then((r) => r.json());
   const ai = new GoogleGenAI({ apiKey: info.token, httpOptions: { apiVersion: "v1alpha" } });
@@ -182,7 +183,10 @@ async function connectVoice() {
     model: info.model,
     config: { responseModalities: [Modality.AUDIO] },
     callbacks: {
-      onopen: () => log("voice ready"),
+      onopen: () => {
+        log("voice ready");
+        if (pendingLine) { const t = pendingLine; pendingLine = null; log("saying the interrupted line again"); setTimeout(() => say(t), 300); }
+      },
       onmessage: (m) => {
         const sc = m.serverContent;
         if (!sc) return;
@@ -192,12 +196,19 @@ async function connectVoice() {
         if (sc.turnComplete) { openGate(); gate = null; turnDone = true; log(`spoke: ${said}`); said = ""; maybeDone(); }
       },
       onerror: (e) => log(`voice error: ${e.message ?? e}`),
-      onclose: (e) => { log(`voice closed: ${e.code} ${e.reason}`); session = null; if (!retired) setTimeout(connectVoice, 1000); },
+      onclose: (e) => {
+        log(`voice closed: ${e.code} ${e.reason}`);
+        if (playingLine && !turnDone && currentText) pendingLine = currentText;  // dropped mid-line
+        session = null;
+        if (!retired) setTimeout(connectVoice, 1000);
+      },
     },
   });
 }
 
+let currentText = "";
 function say(text, retried = false) {
+  currentText = text;
   if (!session) { log("say ignored: voice not connected"); return; }
   if (out.state !== "running") out.resume();  // autoplay policies start audio suspended
   if (!retried) stopPlayback();

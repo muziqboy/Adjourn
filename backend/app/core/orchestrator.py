@@ -221,6 +221,7 @@ class Orchestrator:
             raise ValueError(f"{task.title} is {task.status}, not waiting for approval")
         spec = agents.get(task.type)
         revision = task.revision
+        created_before = task.artifact.external_id if task.artifact else None
         if spec.approve is not None and task.artifact is not None:
             artifact, line = await spec.approve(task, self._context(task, {}))
             if not self.is_current(task_id, revision):
@@ -231,6 +232,14 @@ class Orchestrator:
             self.store.trace(task_id, "info", "Approved")
         task.status = "done"
         self.store.put_task(task)
+        # If the click created the object (a ticket got its identifier), work that used this task
+        # while it was a draft re-runs and picks it up (a meeting about the ticket gets its id and
+        # link, on the same event). An invite or an update creates nothing new: no re-run.
+        created_now = task.artifact is not None and task.artifact.external_id and task.artifact.external_id != created_before
+        if created_now:
+            for other in list(self.store.tasks.values()):
+                if task_id in other.depends_on and other.status not in ("dismissed", "detected", "blocked"):
+                    self.restart(other, f"{task.title} was created")
         self.reconcile()
         return task
 
