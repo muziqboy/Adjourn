@@ -191,7 +191,7 @@ async function connectVoice() {
         if (sc.turnComplete) { openGate(); gate = null; turnDone = true; log(`spoke: ${said}`); said = ""; maybeDone(); }
       },
       onerror: (e) => log(`voice error: ${e.message ?? e}`),
-      onclose: (e) => { log(`voice closed: ${e.code} ${e.reason}`); session = null; setTimeout(connectVoice, 1000); },
+      onclose: (e) => { log(`voice closed: ${e.code} ${e.reason}`); session = null; if (!retired) setTimeout(connectVoice, 1000); },
     },
   });
 }
@@ -208,17 +208,23 @@ function say(text, retried = false) {
 }
 
 // ---- the mind's commands ----
+let retired = false;
 function connectMind() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/voice/ws?token=${token}`);
   ws.onopen = () => { log("mind connected"); idle(); };
   ws.onmessage = (e) => {
     const cmd = JSON.parse(e.data);
+    if (cmd.type === "retire") {  // a newer page took over: go silent for good
+      retired = true; stopPlayback(); session?.close(); session = null;
+      setState("error", "Replaced", "A newer Adjourn voice took over");
+      return;
+    }
     if (cmd.type === "say") say(cmd.text);
     else if (cmd.type === "stop") { log("stop (someone started talking)"); line += 1; stopPlayback(); }
     else if (cmd.type === "hand") { handUp = cmd.up; handPoint = cmd.point || ""; if (!playingLine) idle(); }
   };
-  ws.onclose = () => setTimeout(connectMind, 1000);
+  ws.onclose = (e) => { if (!retired && e.code !== 4409) setTimeout(connectMind, 1000); };
 }
 
 connectMind();

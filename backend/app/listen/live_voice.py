@@ -84,8 +84,17 @@ def build_router(store: Store, floor: Floor) -> APIRouter:
             await ws.close(code=4403)
             return
         await ws.accept()
+        # Exactly one voice: a newer page (the bot reloaded it, or a new bot joined) retires the
+        # older ones, which otherwise keep running and say every line a second time.
+        for old in list(floor.pages):
+            floor.pages.discard(old)
+            try:
+                await old.send_json({"type": "retire"})
+                await old.close(code=4409)
+            except Exception:  # noqa: BLE001  (already gone)
+                pass
         floor.pages.add(ws)
-        log.info("voice page connected")
+        log.info("voice page connected (older pages retired)")
         try:
             while True:
                 message = await ws.receive_json()
