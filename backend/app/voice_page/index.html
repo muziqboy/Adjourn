@@ -11,11 +11,10 @@
     speaking    green orb, sound bars moving with its voice
     error       red orb with the reason
 
-  When may it speak? Gemini's proactive audio alone still answers background chatter, so:
-    - a reply plays if someone said "Adjourn" in what it answers, or within FOLLOW_UP_MS of
-      its last reply (follow-up questions without the name);
-    - any other reply is held and the hand goes up. "Go ahead, Adjourn" plays the held reply;
-      "No thanks, Adjourn" lowers the hand; a new question by name replaces it.
+  When may it speak? Gemini decides: it hears the real audio (our own transcription garbles
+  "Adjourn"). Its instructions say to speak only when addressed or invited, and otherwise to
+  call the raise_hand tool, which shows the hand here; lower_hand takes it down. Audio it does
+  produce is always played.
 -->
 <html lang="en">
 <head>
@@ -104,52 +103,21 @@ function setState(state, status, hint) {
 }
 const LISTENING = () => setState("listening", "Listening", "Say “Adjourn, …” to ask me anything");
 
-// ---- who is talking to whom --------------------------------------------------------------
-const NAME = /\b(a ?d?journ\w*|ajourn\w*|adjourn\w*)\b/i;
-const GO_AHEAD = /\b(go ahead|go for it|yes|yeah|sure|please|tell us|let'?s hear)\b/i;
-const NO_THANKS = /\b(no thanks|no thank you|not now|never ?mind|skip it|that'?s fine)\b/i;
-const FOLLOW_UP_MS = 20000;   // follow-ups without the name, after a reply
-const HAND_MS = 60000;        // the hand comes down by itself after this
-
-let heard = "";               // what the room said since the last decision
-let addressedAt = 0, lastSpokeAt = 0;
-let turn = null;              // "play" | "hold" | "drop", decided at a reply's first audio chunk
-let held = [], heldText = "", handAt = 0;
-let dropNext = false;         // after "go ahead": Gemini also answers that line; skip it
-
-function mayReplyNow() {
-  const now = Date.now();
-  return now - addressedAt < FOLLOW_UP_MS || now - lastSpokeAt < FOLLOW_UP_MS;
-}
-function raiseHand(text) {
-  handAt = Date.now();
-  setState("hand-up", "I have something to add", "Say “Go ahead, Adjourn”");
-  log(`hand up: ${text.slice(0, 160)}`);
+// ---- the raised hand, driven by Gemini's raise_hand / lower_hand tools ----------------
+const HAND_MS = 90000;  // the hand comes down by itself after this
+let handAt = 0, handPoint = "";
+function raiseHand(point) {
+  handAt = Date.now(); handPoint = point || "";
+  if (playing.size === 0) setState("hand-up", "I have something to add", "Say “Go ahead, Adjourn”");
+  log(`hand up: ${handPoint.slice(0, 160)}`);
 }
 function lowerHand(why) {
-  if (!held.length && !handAt) return;
-  held = []; heldText = ""; handAt = 0;
+  if (!handAt) return;
+  handAt = 0; handPoint = "";
   log(`hand down: ${why}`);
   if (playing.size === 0) LISTENING();
 }
 setInterval(() => { if (handAt && Date.now() - handAt > HAND_MS) lowerHand("timeout"); }, 1000);
-
-// called as the room's speech is transcribed
-function onHeard(text) {
-  heard += text;
-  if (!NAME.test(heard)) return;
-  addressedAt = Date.now();
-  if (!handAt) return;
-  if (NO_THANKS.test(heard)) { lowerHand("no thanks"); dropNext = true; heard = ""; }
-  else if (GO_AHEAD.test(heard)) {
-    const chunks = held; const text = heldText;
-    held = []; heldText = ""; handAt = 0;
-    dropNext = true; heard = "";
-    log(`go ahead: playing held reply: ${text.slice(0, 160)}`);
-    setState("speaking", "Speaking", text.slice(-160));
-    chunks.forEach(play);
-  } else lowerHand("asked something new");
-}
 
 // ---- playback of Gemini's 24 kHz PCM, queued back to back; cleared on interruption ----
 const out = new AudioContext({ sampleRate: 24000 });
@@ -171,10 +139,11 @@ function play(b64) {
   src.start(playHead);
   playHead += buf.duration;
   playing.add(src);
+  if (handAt) lowerHand("speaking");  // it was invited
   if (document.body.className !== "speaking") setState("speaking", "Speaking");
   src.onended = () => {
     playing.delete(src);
-    if (playing.size === 0) { lastSpokeAt = Date.now(); handAt ? raiseHand(heldText) : LISTENING(); }
+    if (playing.size === 0) LISTENING();
   };
 }
 function stopPlayback() {
@@ -227,36 +196,28 @@ async function main() {
   log(`token ok, model ${info.model}`);
   const ai = new GoogleGenAI({ apiKey: info.token, httpOptions: { apiVersion: "v1alpha" } });
 
-  let said = "";
-  const session = await ai.live.connect({
+  let said = "", heard = "";
+  let session;
+  session = await ai.live.connect({
     model: info.model,
     config: { responseModalities: [Modality.AUDIO] },
     callbacks: {
       onopen: () => log("live open"),
       onmessage: (m) => {
+        for (const call of m.toolCall?.functionCalls ?? []) {
+          if (call.name === "raise_hand") raiseHand(call.args?.point);
+          if (call.name === "lower_hand") lowerHand("Gemini lowered it");
+          session.sendToolResponse({ functionResponses: [{ id: call.id, name: call.name, response: { result: "ok" } }] });
+        }
         const sc = m.serverContent;
         if (!sc) return;
-        if (sc.inputTranscription?.text) onHeard(sc.inputTranscription.text);
+        if (sc.inputTranscription?.text) heard += sc.inputTranscription.text;
         if (sc.interrupted) { log("interrupted"); stopPlayback(); }
-        for (const part of sc.modelTurn?.parts ?? []) {
-          if (!part.inlineData?.data) continue;
-          if (turn === null) {
-            turn = dropNext ? "drop" : mayReplyNow() ? "play" : "hold";
-            if (turn === "hold") { held = []; heldText = ""; }
-          }
-          if (turn === "play") play(part.inlineData.data);
-          else if (turn === "hold") held.push(part.inlineData.data);
-        }
-        if (sc.outputTranscription?.text) {
-          said += sc.outputTranscription.text;
-          if (turn === "play") $("hint").textContent = said.slice(-160);
-          if (turn === "hold") heldText = said;
-        }
+        for (const part of sc.modelTurn?.parts ?? []) if (part.inlineData?.data) play(part.inlineData.data);
+        if (sc.outputTranscription?.text) { said += sc.outputTranscription.text; $("hint").textContent = said.slice(-160); }
         if (sc.turnComplete) {
-          if (said) log(`[${turn}] heard: ${heard.slice(-160)} | said: ${said}`);
-          if (turn === "hold" && held.length) raiseHand(heldText);
-          if (turn === "drop") dropNext = false;
-          said = ""; heard = ""; turn = null;
+          if (said) log(`heard: ${heard.slice(-160)} | said: ${said}`);
+          said = ""; heard = "";
         }
       },
       onerror: (e) => { log(`live error: ${e.message ?? e}`); setState("error", "Voice error"); },

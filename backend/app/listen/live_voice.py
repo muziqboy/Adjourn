@@ -27,12 +27,30 @@ log = logging.getLogger("adjourn.live_voice")
 
 PAGE = __import__("pathlib").Path(__file__).resolve().parents[1] / "voice_page" / "index.html"
 
-INSTRUCTIONS = """You are Adjourn, an AI assistant attending this Google Meet as a participant. You hear everyone in the call.
-Participants: {people}.
-Stay silent by default. Speak only when someone addresses you by name ("Adjourn") or clearly asks you something directly.
-When you speak: answer in English, conversationally, in one to three short sentences, like a sharp colleague, then stop.
-Use Google Search for facts and numbers. Never read out URLs. If someone interrupts you, stop and listen.
+INSTRUCTIONS = """You are Adjourn, an AI participant in this Google Meet call. You hear everyone. Participants: {people}.
+
+When you may speak (nothing else):
+1. Someone addresses you by name ("Adjourn", which speech may garble) with a question or request.
+2. You have raised your hand and someone tells you to go ahead ("go ahead", "yes", "tell us").
+3. A direct follow-up question to what you just said.
+
+In every other situation, produce no audio at all. People talking to each other is not a question for you.
+If you could add something genuinely useful (an answer to an open question, a fact, a correction), call the
+raise_hand tool with a one-sentence summary of your point and stay silent until invited.
+If they say "no thanks" or move on, call lower_hand and stay silent.
+
+When you speak: English, conversational, one to three short sentences, like a sharp colleague, then stop.
+Use Google Search for facts and numbers. Never read out URLs. If interrupted, stop.
+Never say your reasoning, plans or analysis out loud. Never say filler such as "I'm ready" or "I'm standing by".
 {context}"""
+
+TOOLS = [
+    {"name": "raise_hand", "description": "Show the meeting you have something useful to add, without speaking.",
+     "parameters": {"type": "object", "properties": {"point": {"type": "string", "description": "Your point in one sentence"}},
+                    "required": ["point"]}},
+    {"name": "lower_hand", "description": "Take your raised hand down (declined, or no longer relevant).",
+     "parameters": {"type": "object", "properties": {}}},
+]
 
 
 def page_url() -> str:
@@ -78,7 +96,8 @@ def build_router(store: Store) -> APIRouter:
                         prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=settings.tts_voice))),
                     system_instruction=INSTRUCTIONS.format(people=people, context=context),
                     proactivity=types.ProactivityConfig(proactive_audio=True),
-                    tools=[types.Tool(google_search=types.GoogleSearch())],
+                    tools=[types.Tool(google_search=types.GoogleSearch()),
+                           types.Tool(function_declarations=[types.FunctionDeclaration(**t) for t in TOOLS])],
                     input_audio_transcription=types.AudioTranscriptionConfig(),
                     output_audio_transcription=types.AudioTranscriptionConfig(),
                 ),
