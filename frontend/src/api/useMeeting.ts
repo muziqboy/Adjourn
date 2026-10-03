@@ -2,18 +2,19 @@
 // reducer, plus the POST actions. Components never fetch on their own.
 
 import { useCallback, useEffect, useReducer, useRef } from "react";
-import type { AgentInfo, MeetingContext, MeetingState, Modes, ServerEvent, Snapshot, Task, Usage } from "./contract";
+import type { AgentInfo, BotState, Line, MeetingContext, MeetingState, Modes, ServerEvent, Snapshot, Task, Usage } from "./contract";
 
 export interface MeetingView {
   connected: boolean;
   state: MeetingState;
   meeting: MeetingContext | null;
-  lines: string[];
-  interim: string;
+  lines: Line[];
+  interim: Line | null; // the line being spoken, not final yet
   tasks: Task[]; // creation order
   usage: Usage;
   modes: Modes;
   agents: Record<string, AgentInfo>; // by type
+  bot: BotState;
 }
 
 const initial: MeetingView = {
@@ -21,11 +22,12 @@ const initial: MeetingView = {
   state: "idle",
   meeting: null,
   lines: [],
-  interim: "",
+  interim: null,
   tasks: [],
   usage: { calls: 0, tokens_in: 0, tokens_out: 0 },
   modes: { llm: "?", google: "?", github: "?" },
   agents: {},
+  bot: { state: "none", bot_id: null },
 };
 
 type Action = { type: "connected"; value: boolean } | { type: "event"; event: ServerEvent };
@@ -34,12 +36,13 @@ function fromSnapshot(s: Snapshot): Partial<MeetingView> {
   return {
     state: s.state,
     meeting: s.meeting,
-    lines: s.lines.map((l) => l.text),
-    interim: "",
+    lines: s.lines.map((l) => ({ text: l.text, speaker: l.speaker ?? null })),
+    interim: null,
     tasks: s.tasks,
     usage: s.usage,
     modes: s.modes,
     agents: Object.fromEntries(s.agents.map((a) => [a.type, a])),
+    bot: s.bot ?? initial.bot,
   };
 }
 
@@ -60,10 +63,14 @@ function reducer(view: MeetingView, action: Action): MeetingView {
       return { ...view, ...fromSnapshot(event.data) };
     case "meeting.state":
       return { ...view, state: event.data.state, meeting: event.data.meeting ?? view.meeting };
-    case "transcript.delta":
+    case "transcript.delta": {
+      const line = { text: event.data.text, speaker: event.data.speaker ?? null };
       return event.data.final
-        ? { ...view, lines: [...view.lines.slice(-49), event.data.text], interim: "" }
-        : { ...view, interim: event.data.text };
+        ? { ...view, lines: [...view.lines.slice(-49), line], interim: null }
+        : { ...view, interim: line };
+    }
+    case "bot.state":
+      return { ...view, bot: event.data };
     case "task.created":
     case "task.updated":
       return { ...view, tasks: upsert(view.tasks, event.data) };
@@ -91,7 +98,17 @@ async function post(path: string, body?: unknown) {
     headers: body === undefined ? undefined : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!res.ok) throw new Error((await res.text()) || res.statusText);
+  if (!res.ok) {
+    // FastAPI errors are {"detail": "..."}; show just the sentence
+    const text = await res.text();
+    let message = text || res.statusText;
+    try {
+      message = JSON.parse(text).detail ?? message;
+    } catch {
+      /* not JSON */
+    }
+    throw new Error(message);
+  }
   return res.json();
 }
 
@@ -130,5 +147,7 @@ export function useMeeting() {
     approve: useCallback((id: string): Promise<Task> => post(`/api/tasks/${id}/approve`), []),
     dismiss: useCallback((id: string) => post(`/api/tasks/${id}/dismiss`), []),
     reset: useCallback(() => post("/api/reset"), []),
+    sendBot: useCallback((meeting_url: string) => post("/api/bot/join", { meeting_url }), []),
+    botLeave: useCallback(() => post("/api/bot/leave"), []),
   };
 }

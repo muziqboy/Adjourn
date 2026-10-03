@@ -77,20 +77,31 @@ export type MeetingState = "idle" | "live" | "ended";
 
 export interface Modes { llm: string; google: string; github: string }
 
+/** A transcript line. `speaker` is known when the meeting bot heard it (Meet captions carry names). */
+export interface Line { text: string; speaker: string | null }
+
+/** The Recall.ai meeting bot (backend/app/listen/bot.py). */
+export interface BotState {
+  state: "none" | "joining" | "waiting_room" | "in_call" | "left" | "error";
+  bot_id: string | null;
+}
+
 export interface Snapshot {
   state: MeetingState;
   meeting: MeetingContext | null;
-  lines: { ts: number; text: string }[];
+  lines: { ts: number; text: string; speaker?: string | null }[];
   tasks: Task[];
   usage: Usage;
   modes: Modes;
   agents: AgentInfo[];
+  bot: BotState;
 }
 
 export type ServerEvent =
   | { seq: number; ts: number; type: "snapshot"; data: Snapshot }
   | { seq: number; ts: number; type: "meeting.state"; data: { state: MeetingState; meeting?: MeetingContext } }
-  | { seq: number; ts: number; type: "transcript.delta"; data: { text: string; final: boolean } }
+  | { seq: number; ts: number; type: "transcript.delta"; data: { text: string; final: boolean; speaker?: string | null } }
+  | { seq: number; ts: number; type: "bot.state"; data: BotState }
   | { seq: number; ts: number; type: "task.created"; data: Task }
   | { seq: number; ts: number; type: "task.updated"; data: Task }
   | { seq: number; ts: number; type: "task.trace"; data: { task_id: string; entry: TraceEntry } }

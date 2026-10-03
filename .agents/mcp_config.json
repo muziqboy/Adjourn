@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "adjourn": {
+      "serverUrl": "http://localhost:8010/mcp"
+    }
+  }
+}

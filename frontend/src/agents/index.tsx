@@ -16,7 +16,7 @@ export interface CardFace {
   /** Links next to the approval button ("Open in Calendar", source chips). */
   links?: (task: Task) => ReactNode;
   /** Runs in the panel after the click succeeded (e.g. speak the answer). */
-  afterApprove?: (task: Task) => void | Promise<void>;
+  afterApprove?: (task: Task, ctx: { botInCall: boolean }) => void | Promise<void>;
   /** Headline shown while the card waits for its click, e.g. "✋ Adjourn has an answer". */
   waiting?: string;
   /** Status shown once done, if "Done" is not the right word (e.g. "Spoken"). */
@@ -56,7 +56,8 @@ const FACES: Record<string, CardFace> = {
     facts: (t) => firstLine(t.artifact?.content),
     details: (t) => <Pre>{t.artifact?.content ?? ""}</Pre>,
     links: sourceChips,
-    afterApprove: (t) => speak(t.artifact?.content ?? ""),
+    // with a meeting bot in the call, the backend already had the bot say it
+    afterApprove: (t, { botInCall }) => (botInCall ? undefined : speak(t.artifact?.content ?? "")),
     waiting: "✋ Adjourn has an answer",
     doneLabel: "Spoken",
   },

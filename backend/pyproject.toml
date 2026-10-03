@@ -10,6 +10,8 @@ dependencies = [
     "google-genai",
     "google-api-python-client",
     "google-auth-oauthlib",
+    "lameenc>=1.8.4",
+    "mcp>=2.3.0",
 ]
 
 [dependency-groups]

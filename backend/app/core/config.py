@@ -8,6 +8,7 @@ the shell wins over the file.
 """
 
 import os
+import secrets
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -56,6 +57,14 @@ class Settings:
         self.github_token = os.getenv("GITHUB_TOKEN", "")
         self.credentials_file = BACKEND / "credentials.json"  # Google OAuth client
         self.token_file = BACKEND / "token.json"  # Google OAuth token, written by scripts/google_auth.py
+
+        # --- meeting bot (Recall.ai): joins the Meet as its own participant, hears with speaker
+        # names, speaks. Needs a public URL for Recall's webhooks (a tunnel to this backend).
+        self.recall_api_key = os.getenv("RECALL_API_KEY", "")
+        self.recall_region = os.getenv("RECALL_REGION", "us-west-2")  # API keys are region-bound
+        self.public_url = os.getenv("PUBLIC_URL", "").rstrip("/")  # e.g. https://xyz.trycloudflare.com
+        self.recall_webhook_token = os.getenv("RECALL_WEBHOOK_TOKEN") or secrets.token_urlsafe(16)
+        self.bot_name = os.getenv("BOT_NAME", "Adjourn")
 
         # --- meeting defaults (prefill the setup screen; used by replays) ---
         self.timezone = os.getenv("TIMEZONE", "Europe/Stockholm")

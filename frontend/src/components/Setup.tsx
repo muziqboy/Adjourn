@@ -1,17 +1,21 @@
-// The first screen: who is on the call, which modes are on, and "Start listening".
+// The first screen: who is on the call, how Adjourn should hear it, and "Start".
+// With a Meet link, the Recall.ai bot joins the call as "Adjourn" (hears names, speaks as a
+// participant). Without one, the laptop microphone listens and the speakers talk.
 
 import { useEffect, useState } from "react";
 import type { Health, MeetingContext, Person } from "../api/contract";
 
 interface Props {
   health: Health | null;
-  onStart: (meeting: MeetingContext) => Promise<void>;
+  onStart: (meeting: MeetingContext, meetUrl: string) => Promise<void>;
 }
 
 export function Setup({ health, onStart }: Props) {
   const [me, setMe] = useState<Person>({ name: "", email: "" });
   const [others, setOthers] = useState<Person[]>([{ name: "", email: "" }]);
+  const [meetUrl, setMeetUrl] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // prefill from .env (ME_*, GUEST_*) unless the user has typed something
   useEffect(() => {
@@ -25,8 +29,12 @@ export function Setup({ health, onStart }: Props) {
     e.preventDefault();
     if (!valid) return;
     setBusy(true);
+    setError(null);
     try {
-      await onStart({ me, others, timezone: health?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone });
+      const timezone = health?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+      await onStart({ me, others, timezone }, meetUrl.trim());
+    } catch (err) {
+      setError((err as Error).message);
     } finally {
       setBusy(false);
     }
@@ -57,17 +65,33 @@ export function Setup({ health, onStart }: Props) {
         </button>
       </fieldset>
 
+      <fieldset>
+        <legend>Meeting bot (optional)</legend>
+        <input
+          placeholder="https://meet.google.com/abc-defg-hij"
+          value={meetUrl}
+          onChange={(e) => setMeetUrl(e.target.value)}
+        />
+        <p className="muted tiny">
+          With a link, Adjourn joins the call as its own participant (admit it from the lobby).
+          Without one, it listens through this laptop's microphone.
+        </p>
+      </fieldset>
+
       <p className="status-line">
         Agents: <b>{health?.agents.join(", ") ?? "?"}</b>
         <br />
         Model: <b>{health?.llm ?? "?"}</b> · Google: <b>{health?.google ?? "?"}</b> · GitHub: <b>{health?.github ?? "?"}</b>
       </p>
-      <p className="note">
-        Use speakers, not headphones: Adjourn hears the other side through your laptop's microphone, and
-        speaks its answers through the speakers. Keep this window open beside the call.
-      </p>
+      {!meetUrl && (
+        <p className="note">
+          Laptop mode: use speakers, not headphones. Adjourn hears the other side through your laptop's
+          microphone and speaks through the speakers. Keep this window open beside the call.
+        </p>
+      )}
+      {error && <p className="review">{error}</p>}
       <button className="primary" disabled={!valid || busy}>
-        {busy ? "Starting…" : "Start listening"}
+        {busy ? "Starting…" : meetUrl ? "Send Adjourn to the call" : "Start listening"}
       </button>
     </form>
   );

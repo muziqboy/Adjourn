@@ -3,8 +3,8 @@ hand, and on the click says the answer out loud in the meeting.
 
     run      Gemini + Google Search -> a short spoken answer with sources (panel only)
     verify   code: at least one source, short enough to say in ~20 s, no markdown or URLs
-    click    "Let it speak": the panel speaks the answer (browser speech for now; see
-             docs/SCOPE.md, "Voice into the meeting")
+    click    "Let it speak": the meeting bot says it in the call when one is in the meeting
+             (app/listen/bot.py); otherwise the panel speaks it through the laptop speakers
 """
 
 import re
@@ -49,9 +49,14 @@ async def verify(task: Task, artifact: Artifact, ctx: RunContext) -> list[str]:
 
 
 async def approve(task: Task, ctx: RunContext) -> tuple[Artifact, str]:
-    # The panel speaks the text when this returns. Server-side voice (Gemini TTS into a
-    # virtual microphone) would go here.
-    return task.artifact, "Spoken in the meeting"
+    from ..core.store import store
+    from ..listen import bot
+
+    if bot.in_call(store):
+        await bot.say(store, task.artifact.content or "")
+        return task.artifact, "Spoken in the meeting by the bot"
+    # no bot in the call: the panel speaks it when this returns (frontend/src/audio/speak.ts)
+    return task.artifact, "Spoken in the meeting through the laptop speakers"
 
 
 # ---------- mock (LLM_MODE=mock) ----------

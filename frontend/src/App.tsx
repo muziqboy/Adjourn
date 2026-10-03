@@ -19,7 +19,7 @@ import { TaskCard } from "./components/TaskCard";
 import { Transcript } from "./components/Transcript";
 
 export default function App() {
-  const { view, start, stop, say, replay, approve, dismiss, reset } = useMeeting();
+  const { view, start, stop, say, replay, approve, dismiss, reset, sendBot, botLeave } = useMeeting();
   const [health, setHealth] = useState<Health | null>(null);
   const [level, setLevel] = useState(0);
   const [micOn, setMicOn] = useState(false);
@@ -52,7 +52,18 @@ export default function App() {
   }
 
   if (view.state === "idle") {
-    return <Setup health={health} onStart={async (m: MeetingContext) => { await start(m); await listen(); }} />;
+    // a Meet link sends the bot (it hears and speaks); otherwise the laptop mic listens
+    const onStart = async (m: MeetingContext, meetUrl: string) => {
+      await start(m);
+      if (!meetUrl) return listen();
+      try {
+        await sendBot(meetUrl);
+      } catch (err) {
+        // the live screen is already showing; surface the reason there
+        setMicError(`The bot could not join: ${(err as Error).message}. Type, replay, or turn the mic on.`);
+      }
+    };
+    return <Setup health={health} onStart={onStart} />;
   }
 
   const people = view.meeting ? [...view.meeting.others, view.meeting.me] : [];
@@ -64,7 +75,9 @@ export default function App() {
         level={level}
         micOn={micOn}
         connected={view.connected}
+        bot={view.bot}
         onListen={listen}
+        onBotLeave={() => void botLeave()}
         onStop={async () => { stopListening(); await stop(); }}
         onReset={async () => { stopListening(); await reset(); }}
       />
@@ -79,6 +92,7 @@ export default function App() {
             tasks={view.tasks}
             info={view.agents[task.type]}
             people={people}
+            botInCall={view.bot.state === "in_call"}
             onApprove={() => approve(task.id)}
             onDismiss={() => dismiss(task.id)}
           />

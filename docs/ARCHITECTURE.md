@@ -5,6 +5,10 @@ is the acceptance test for everything here.
 
 ## The pipeline
 
+    Two ways to hear the call (both end in store.add_line):
+      A. Recall.ai bot "Adjourn" in the Meet ─ Meet captions with names ─> POST /api/recall/webhook/  (listen/bot.py)
+      B. laptop audio, below (fallback)
+
     Google Meet (Chrome) ── laptop speakers ──┐
                                               v
     panel  audio/capture.ts: mic -> 16 kHz PCM ──WS /ws/audio──┐
@@ -24,20 +28,26 @@ is the acceptance test for everything here.
                                                                v
             core/store.py: state + events ──WS /ws──> panel: cards, traces, buttons
                                                                v
-              click: speak (audio/speak.ts) · create issue (integrations/github.py) · invite (integrations/calendar.py)
+              click: speak (the bot in the call, or audio/speak.ts) · create issue (integrations/github.py) · invite (integrations/calendar.py)
+
+    Outside agents (Google Antigravity, any MCP client) see and steer the same task graph
+    through the MCP server at /mcp (api/mcp.py).
 
 ## Repository layout
 
+    .agents/mcp_config.json   Antigravity workspace config: points its agent at Adjourn's MCP server
     docs/                DEMO.md (acceptance test), ARCHITECTURE.md (this), SCOPE.md (decisions, open questions)
     fixtures/            recorded calls as timed transcript lines; "Replay demo" plays demo_call.jsonl
     backend/app/
       main.py            wiring only
       api/routes.py      HTTP + WebSocket routes
+      api/mcp.py         MCP server at /mcp: the task graph as tools, for Antigravity and other agents
       core/              config, contract (shared types), store, orchestrator, intent (meeting agent)
       agents/            one file per agent + base.py (the plugin interface) + __init__.py (registry)
-      integrations/      one file per external service, each with mock / links / live modes
+      integrations/      one file per external service, each with mock / links / live modes;
+                         recall.py (meeting bot API), voice.py (text -> MP3, local and free)
       llm/               generate() (the only model entry point), gemini.py, condense.py
-      listen/            audio.py: microphone frames -> Gemini Live -> transcript lines
+      listen/            bot.py: the Recall bot (join, webhook -> lines, speak); audio.py: laptop mic -> Gemini Live -> lines
     backend/tests/       the graph and the demo call, all on mocks, no network
     backend/scripts/     spikes: smoke_llm.py, google_auth.py, smoke_google.py, smoke_github.py
     frontend/src/

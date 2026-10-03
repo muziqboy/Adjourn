@@ -11,13 +11,17 @@ session and returns. See docs/ARCHITECTURE.md for the full list with payloads.
     POST /api/tasks/{id}/approve   the card's click (invite, speak, create issue)
     POST /api/tasks/{id}/dismiss   the card was wrong
     POST /api/reset                forget everything (and every mock object)
+    POST /api/bot/join             {meeting_url}: send the Recall bot into the Meet
+    POST /api/bot/leave
+    POST /api/recall/webhook/      Recall's live transcripts (?token= must match)
+    *    /mcp                      MCP server for Antigravity and other agents (api/mcp.py)
 """
 
 import asyncio
 import json
 import time
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from .. import integrations
@@ -26,11 +30,15 @@ from ..core.contract import MeetingContext
 from ..core.intent import IntentSession
 from ..core.orchestrator import Orchestrator
 from ..core.store import Store
-from ..listen import audio
+from ..listen import audio, bot
 
 
 class Line(BaseModel):
     text: str
+
+
+class Join(BaseModel):
+    meeting_url: str
 
 
 def build_router(store: Store, orch: Orchestrator, intent: IntentSession) -> APIRouter:
@@ -111,10 +119,33 @@ def build_router(store: Store, orch: Orchestrator, intent: IntentSession) -> API
     @router.post("/api/reset")
     async def reset():
         stop_replay()
+        if store.bot.get("state") in ("joining", "waiting_room", "in_call"):
+            await bot.leave(store)
         orch.reset()
         intent.reset()
         integrations.reset_mocks()
         store.reset()
+        return {"ok": True}
+
+    @router.post("/api/bot/join")
+    async def bot_join(body: Join):
+        store.ensure_meeting()
+        try:
+            created = await bot.join(store, body.meeting_url)
+        except RuntimeError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"ok": True, "bot_id": created["id"]}
+
+    @router.post("/api/bot/leave")
+    async def bot_leave():
+        await bot.leave(store)
+        return {"ok": True}
+
+    @router.post("/api/recall/webhook/")
+    async def recall_webhook(request: Request, token: str = ""):
+        if token != settings.recall_webhook_token:
+            raise HTTPException(403, "bad token")
+        bot.handle_webhook(store, await request.json())
         return {"ok": True}
 
     @router.websocket("/ws")

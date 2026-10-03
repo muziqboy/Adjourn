@@ -21,11 +21,12 @@ interface Props {
   tasks: Task[];
   info: AgentInfo | undefined;
   people: Person[];
+  botInCall: boolean;
   onApprove: () => Promise<Task>;
   onDismiss: () => Promise<unknown>;
 }
 
-export function TaskCard({ task, tasks, info, people, onApprove, onDismiss }: Props) {
+export function TaskCard({ task, tasks, info, people, botInCall, onApprove, onDismiss }: Props) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +47,7 @@ export function TaskCard({ task, tasks, info, people, onApprove, onDismiss }: Pr
     setBusy(true);
     try {
       const done = await onApprove();
-      await f.afterApprove?.(done);
+      await f.afterApprove?.(done, { botInCall });
     } catch (err) {
       setError((err as Error).message);
     } finally {

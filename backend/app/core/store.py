@@ -4,7 +4,8 @@ All state changes go through the Store, and every change emits an event on `/ws`
 
     snapshot          full state, on connect and after reset
     meeting.state     {state: idle | live | ended}
-    transcript.delta  {text, final}
+    transcript.delta  {text, final, speaker}   speaker: a name when the meeting bot heard it
+    bot.state         {state, bot_id}           the meeting bot (none | joining | in_call | left | error)
     task.created      Task
     task.updated      Task (full; the panel replaces it by id)
     task.trace        {task_id, entry}
@@ -39,6 +40,7 @@ class Store:
         self.lines: list[dict] = []
         self.tasks: dict[str, Task] = {}
         self.usage = Usage()
+        self.bot: dict = {"state": "none", "bot_id": None}
 
     # events
 
@@ -65,6 +67,7 @@ class Store:
             "usage": self.usage.model_dump(),
             "modes": {"llm": settings.llm_mode, "google": settings.google_mode, "github": settings.github_mode},
             "agents": self.describe_agents(),
+            "bot": self.bot,
         }
 
     def reset(self) -> None:
@@ -92,23 +95,31 @@ class Store:
 
     # transcript
 
-    def add_line(self, text: str) -> None:
-        """A finalised transcript line, from audio, the text box or a replay. Everything
-        downstream of this call is the same whatever the source."""
+    def add_line(self, text: str, speaker: str | None = None) -> None:
+        """A finalised transcript line, from the meeting bot, the laptop mic, the text box or a
+        replay. Everything downstream of this call is the same whatever the source.
+        `speaker` is known only when the meeting bot heard it (Meet captions carry names)."""
         text = " ".join(text.split())
         if not text:
             return
-        self.lines.append({"ts": time.time(), "text": text})
-        self.emit("transcript.delta", {"text": text, "final": True})
+        self.lines.append({"ts": time.time(), "text": text, "speaker": speaker})
+        self.emit("transcript.delta", {"text": text, "final": True, "speaker": speaker})
         for listener in self.line_listeners:
             listener(text)
 
-    def interim(self, text: str) -> None:
+    def interim(self, text: str, speaker: str | None = None) -> None:
         """Unfinished speech, shown grey on the panel; never reaches the intent pass."""
-        self.emit("transcript.delta", {"text": text, "final": False})
+        self.emit("transcript.delta", {"text": text, "final": False, "speaker": speaker})
 
     def transcript(self) -> str:
-        return "\n".join(line["text"] for line in self.lines)
+        """The whole call as text for prompts, with names where the bot knew them."""
+        return "\n".join(f"{l['speaker']}: {l['text']}" if l.get("speaker") else l["text"] for l in self.lines)
+
+    # meeting bot
+
+    def set_bot(self, state: str, bot_id: str | None = None) -> None:
+        self.bot = {"state": state, "bot_id": bot_id if bot_id is not None else self.bot.get("bot_id")}
+        self.emit("bot.state", self.bot)
 
     # tasks
 

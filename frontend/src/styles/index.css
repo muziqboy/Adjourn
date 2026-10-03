@@ -124,7 +124,7 @@ legend { font-weight: 600; margin-bottom: 6px; }
 
 /* live */
 .header {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px;
   padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--surface);
 }
 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); transition: transform 80ms; }
@@ -202,3 +202,14 @@ legend { font-weight: 600; margin-bottom: 6px; }
 .say { display: flex; gap: 6px; }
 .say input { flex: 1; }
 .footer-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+
+/* meeting bot */
+.speaker { font-weight: 600; }
+.bot-chip { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--code); color: var(--muted); white-space: nowrap; }
+.bot-chip.in_call { color: var(--ok); }
+.bot-chip.waiting_room { color: var(--warn); }
+.bot-chip.error { color: var(--bad); }
+.setup fieldset input { width: 100%; }
+.setup .person input { width: auto; }
+.header button, .header-title, .clock { white-space: nowrap; }
+.app { min-width: 0; overflow-x: hidden; }

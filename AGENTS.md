@@ -52,6 +52,8 @@ Parallel work stays painless when each person owns a folder:
 | An integration (GitHub, Calendar, Linear) | `backend/app/integrations/` | no |
 | Voice (speaking into the meeting) | `frontend/src/audio/speak.ts`, `agents/answer.py` `approve` | no |
 | Condense | `backend/app/llm/condense.py` | no |
+| Meeting bot (Recall) | `backend/app/listen/bot.py`, `backend/app/integrations/recall.py` | no |
+| Antigravity / MCP tools | `backend/app/api/mcp.py`, `.agents/mcp_config.json` | no |
 | Panel UI | `frontend/src/components/`, `frontend/src/agents/` | sometimes |
 
 ## Google sign-in
@@ -62,6 +64,26 @@ Parallel work stays painless when each person owns a folder:
 4. `cd backend && uv run python scripts/google_auth.py` and sign in as the demo account (on
    "Google hasn't verified this app": Advanced, then continue). This writes `backend/token.json`.
 5. `uv run python scripts/smoke_google.py` checks every call. Then `GOOGLE_MODE=live`.
+
+## Meeting bot (Recall.ai)
+
+1. Sign up at Recall.ai in one region (US West is the default here) and create an API key at
+   `https://<region>.recall.ai/dashboard/developers/api-keys`. Put `RECALL_API_KEY` and
+   `RECALL_REGION` in `.env`.
+2. Recall must reach our webhook, so expose the backend:
+   `cloudflared tunnel --url http://localhost:8010` (free, no account) and put the printed
+   `https://….trycloudflare.com` URL in `.env` as `PUBLIC_URL`. Restart the backend.
+3. In the panel, paste the Meet link and press **Send Adjourn to the call**; admit "Adjourn"
+   from the Meet lobby. Lines appear with speaker names; **Let it speak** makes the bot talk.
+
+Free parts: Meet captions as transcripts. The bot itself: 5 free hours, then $0.50/hour.
+
+## Antigravity (MCP)
+
+With the backend running, open this repository as the workspace in Antigravity: it reads
+`.agents/mcp_config.json` and connects to `http://localhost:8010/mcp`. Ask its agent, for
+example, "list Adjourn's tasks" or "move the follow-up to Friday at two". Antigravity asks
+before each tool call; `approve_task` is the only tool that reaches other people.
 
 ## GitHub
 

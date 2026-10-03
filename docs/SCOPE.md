@@ -27,10 +27,12 @@ Gmail draft) still runs as `fixtures/pricing_call.jsonl` and its test.
 | 3 Oct | Email and research agents stay in the code, off by default (`AGENTS`) | Already working and tested; cheap to bring back |
 | 3 Oct | Runs on one laptop on localhost; in-memory state, no accounts, no database | Hackathon scope |
 | 3 Oct | **The entire stack must be free** (no paid tiers, no per-hour services beyond a free trial we do not depend on) | Team decision |
+| 3 Oct | **Meeting bot: Recall.ai** (not self-hosted Attendee). Exception to the free rule: Recall is free for the first 5 hours, then $0.50/h; its caption transcripts are free. Laptop audio stays as the fallback | Team decision. Also practical: Attendee's image is x86-only, so it runs emulated on the M1 demo laptop |
+| 3 Oct | **Antigravity: integrate through MCP, not A2A.** Antigravity has no A2A support (no remote agents, no Agent Cards); MCP is its integration point. Adjourn serves an MCP server at `/mcp`; `.agents/mcp_config.json` points Antigravity at it | Research, see "Antigravity" below |
 
 ## Open questions (decide, then move to Decisions)
 
-0. **How Adjourn joins the call: laptop audio or a meeting bot?** This decides the listening
+0. ~~**How Adjourn joins the call: laptop audio or a meeting bot?**~~ Decided: Recall.ai bot, laptop audio as fallback (see Decisions). Kept for the record: This decides the listening
    and voice stack. Research and recommendation in "Research: can a bot join the meeting?"
    below. With the free-stack rule: self-hosted Attendee bot, laptop audio kept as the
    fallback. Decide after the spikes listed there.
@@ -53,6 +55,8 @@ Gmail draft) still runs as `fixtures/pricing_call.jsonl` and its test.
    only when nobody on the call answers within a few seconds?
 6. **Partner technology.** Confirm with an organiser that Gemini (Live, Flash, Search
    grounding) counts, and whether Condense earns a side prize.
+7. **Should Adjourn delegate tasks to Antigravity** (its connectors doing the work), or only
+   be steered by it over MCP? See "Antigravity" above.
 
 ## Research: can a bot join the meeting? (3 October 2026)
 
@@ -187,6 +191,46 @@ switch to self-hosted Attendee.
 - [Recall.ai: building a Meet bot from scratch](https://www.recall.ai/blog/how-i-built-an-in-house-google-meet-bot)
 - [Google Workspace: echo cancellation](https://workspace.google.com/resources/echo-cancellation)
 
+## Antigravity (3 October 2026)
+
+Question: can Adjourn talk to Google Antigravity over A2A, and can Antigravity's MCP
+connectors control Adjourn's orchestration?
+
+**A2A: not possible.** Antigravity (app 2.19.1 on the demo Mac) documents no A2A support: its
+subagents are local Markdown files only, with no remote-agent or Agent Card option, and nothing
+in its MCP, CLI, SDK or changelog docs mentions A2A. "Remote Control" (Aug 2026) is browser
+control of local sessions, not A2A. Gemini CLI did support remote A2A agents, but Antigravity
+CLI replaced it on 18 June 2026 with no sign the feature carried over. A2A is only worth adding
+to Adjourn if other A2A clients (Google ADK agents) need to reach it: `a2a-sdk` 1.2.1 can mount
+an A2A endpoint on our FastAPI app.
+
+**MCP: built.** Antigravity supports MCP servers over stdio, Streamable HTTP and SSE, configured
+globally in `~/.gemini/config/mcp_config.json` or per workspace in `.agents/mcp_config.json`
+(remote servers use the `serverUrl` key). Adjourn now serves MCP at
+`http://localhost:8010/mcp` (`backend/app/api/mcp.py`) with tools: `get_meeting`,
+`list_agent_types`, `list_tasks`, `get_task`, `create_task`, `update_task`, `approve_task`,
+`dismiss_task`, `add_transcript_line`, `send_bot`. They go through the same orchestrator as the
+panel, so the approval policy holds: only `approve_task` reaches other people, and
+Antigravity asks before each tool call by default. Verified with the official MCP client over
+HTTP and in tests; not yet clicked through inside the Antigravity app.
+
+**The other direction (open question 7):** Adjourn could hand work *to* Antigravity, whose
+own MCP store connectors (GitHub, Linear, Notion, Atlassian, ...; Google Calendar is not in
+the store) would then do it. Antigravity can be started headless: `agy -p "..."
+--output-format json` (needs one interactive sign-in first) or the Python SDK
+`google-antigravity` (0.1.20). In our structure that is one more agent file
+(`agents/antigravity.py`) whose `run` calls `agy`. Not built: decide first whether we want it.
+
+Sources: [Antigravity MCP docs](https://antigravity.google/docs/mcp/),
+[subagents](https://antigravity.google/docs/subagents),
+[changelog](https://antigravity.google/docs/changelog),
+[headless CLI](https://antigravity.google/docs/cli/headless/),
+[Python SDK](https://github.com/google-antigravity/antigravity-sdk-python),
+[Workspace MCP codelab](https://codelabs.developers.google.com/google-workspace-mcp-antigravity),
+[A2A Python SDK](https://github.com/a2aproject/a2a-python),
+[ADK: exposing an agent over A2A](https://adk.dev/a2a/quickstart-exposing/),
+[Gemini CLI remote agents](https://geminicli.com/docs/core/remote-agents/).
+
 ## Spikes
 
 | Spike | Command | Result |
@@ -196,7 +240,9 @@ switch to self-hosted Attendee.
 | Google sign-in, Calendar hold, move, invite, Gmail draft | `scripts/google_auth.py`, then `scripts/smoke_google.py` | pending |
 | GitHub: create and edit an issue | `scripts/smoke_github.py` | pending |
 | Voice into the meeting (question 1) | Let it speak on a real call, B listens | pending |
-| Attendee self-hosted bot (question 0) | Docker; guest bot into a test Meet; captions arrive; one MP3 via `/output_audio` | pending |
+| ~~Attendee self-hosted bot~~ | dropped for Recall.ai (team decision) | — |
+| Recall.ai bot | `.env` key + tunnel; panel "Send Adjourn to the call"; admit it; captions arrive with names; "Let it speak" plays in the call | pending: needs a Recall account and a tunnel |
+| Antigravity over MCP | open this repo in Antigravity with the backend running; ask its agent to list Adjourn's tasks | pending |
 | Gemini free tier under demo load | Replay with `LLM_MODE=gemini`; watch for 429s | pending |
 | Condense in front of the meeting agent (question 2) | implement `llm/condense.py` | pending |
 
