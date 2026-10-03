@@ -69,6 +69,15 @@ const FACES: Record<string, CardFace> = {
     details: (t) => <Pre>{`# ${t.artifact?.title}\n\n${t.artifact?.body ?? ""}`}</Pre>,
     links: openLink("Open on GitHub"),
   },
+  linear: {
+    facts: (t, people) => {
+      const a = t.artifact!;
+      const who = a.to.length ? people.find((p) => p.email === a.to[0])?.name ?? a.to[0] : "unassigned";
+      return `${a.external_id ?? "Plan"} · ${a.title} → ${who}`;
+    },
+    details: (t) => <Pre>{`# ${t.artifact?.title}\n\n${t.artifact?.body ?? ""}${t.artifact?.note ? `\n\n${t.artifact.note}` : ""}`}</Pre>,
+    links: openLink("Open in Linear"),
+  },
   schedule: {
     facts: (t) => {
       const a = t.artifact!;

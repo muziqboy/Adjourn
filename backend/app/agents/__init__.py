@@ -11,10 +11,10 @@ Registry order matters only in mock mode, where each agent's keyword matcher run
 
 from ..core.config import settings
 from ..core.contract import AgentInfo
-from . import answer, email, issue, research, schedule
+from . import answer, email, issue, linear, research, schedule
 from .base import AgentSpec
 
-_ALL: list[AgentSpec] = [answer.AGENT, research.AGENT, issue.AGENT, email.AGENT, schedule.AGENT]
+_ALL: list[AgentSpec] = [answer.AGENT, research.AGENT, issue.AGENT, linear.AGENT, email.AGENT, schedule.AGENT]
 REGISTRY: dict[str, AgentSpec] = {spec.type: spec for spec in _ALL}
 
 
