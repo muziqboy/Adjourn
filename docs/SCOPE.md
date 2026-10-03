@@ -235,7 +235,7 @@ Sources: [Antigravity MCP docs](https://antigravity.google/docs/mcp/),
 
 | Spike | Command | Result |
 |---|---|---|
-| Gemini text: plain, structured ops, search grounding, function calling | `cd backend && uv run python scripts/smoke_llm.py` | pending |
+| Gemini text: plain, structured ops, search grounding, function calling | `cd backend && uv run python scripts/smoke_llm.py` | **Pass (3 Oct, 15:27).** All four in 1.4–4.7 s with `gemini-3.8-flash`. The `Op` schema works as structured output. Grounding sources are `grounding_chunks[].web` with a domain as title and a Google redirect link as URI |
 | Audio: remote voice transcribed from the speakers | `LLM_MODE=gemini`, Start listening on a real Meet call | pending |
 | Google sign-in, Calendar hold, move, invite, Gmail draft | `scripts/google_auth.py`, then `scripts/smoke_google.py` | pending |
 | GitHub: create and edit an issue | `scripts/smoke_github.py` | pending |
@@ -243,7 +243,7 @@ Sources: [Antigravity MCP docs](https://antigravity.google/docs/mcp/),
 | ~~Attendee self-hosted bot~~ | dropped for Recall.ai (team decision) | — |
 | Recall.ai bot | `.env` key + tunnel; panel "Send Adjourn to the call"; admit it; captions arrive with names; "Let it speak" plays in the call | pending: needs a Recall account and a tunnel |
 | Antigravity over MCP | open this repo in Antigravity with the backend running; ask its agent to list Adjourn's tasks | pending |
-| Gemini free tier under demo load | Replay with `LLM_MODE=gemini`; watch for 429s | pending |
+| Gemini free tier under demo load | Replay with `LLM_MODE=gemini`; watch for 429s | **Pass (3 Oct, 15:29).** No 429s. Real Gemini reproduced the demo: answer, issue depending on answer and meeting, meeting moved to Fri 9 Oct 14:00, no cards from small talk |
 | Condense in front of the meeting agent (question 2) | implement `llm/condense.py` | pending |
 
 ## Out of scope

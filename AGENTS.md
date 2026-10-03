@@ -72,7 +72,11 @@ Parallel work stays painless when each person owns a folder:
    `RECALL_REGION` in `.env`.
 2. Recall must reach our webhook, so expose the backend:
    `cloudflared tunnel --url http://localhost:8010` (free, no account) and put the printed
-   `https://….trycloudflare.com` URL in `.env` as `PUBLIC_URL`. Restart the backend.
+   `https://….trycloudflare.com` URL in `.env` as `PUBLIC_URL`, plus a fixed
+   `RECALL_WEBHOOK_TOKEN` (any random string; otherwise it changes on every restart and a bot
+   already in a call loses its webhook). Restart the backend. Requests through the tunnel can
+   reach only the webhook (`main.py` blocks everything else: the panel API and `/mcp` have no
+   auth). The quick-tunnel URL changes every time cloudflared restarts.
 3. In the panel, paste the Meet link and press **Send Adjourn to the call**; admit "Adjourn"
    from the Meet lobby. Lines appear with speaker names; **Let it speak** makes the bot talk.
 
