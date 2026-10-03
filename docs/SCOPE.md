@@ -26,19 +26,20 @@ Gmail draft) still runs as `fixtures/pricing_call.jsonl` and its test.
 | 3 Oct | Agents are plugins (`backend/app/agents/`), integrations have mock / links / live modes | Five people work in parallel; the demo never depends on a sign-in |
 | 3 Oct | Email and research agents stay in the code, off by default (`AGENTS`) | Already working and tested; cheap to bring back |
 | 3 Oct | Runs on one laptop on localhost; in-memory state, no accounts, no database | Hackathon scope |
+| 3 Oct | **The entire stack must be free** (no paid tiers, no per-hour services beyond a free trial we do not depend on) | Team decision |
 
 ## Open questions (decide, then move to Decisions)
 
 0. **How Adjourn joins the call: laptop audio or a meeting bot?** This decides the listening
    and voice stack. Research and recommendation in "Research: can a bot join the meeting?"
-   below. Recommendation: Recall.ai bot for listening and speaking, laptop audio kept as the
-   fallback. Decide after the two 10-minute spikes listed there.
+   below. With the free-stack rule: self-hosted Attendee bot, laptop audio kept as the
+   fallback. Decide after the spikes listed there.
 1. **Voice into the meeting.** How does B hear Adjourn? Options, simplest first:
    a. Panel speaks through the laptop speakers (`audio/speak.ts`, browser speech); Meet's mic
       picks it up. Risk: Meet's echo cancellation / noise suppression may remove it.
    b. A virtual audio device (BlackHole) as Meet's microphone, mixing the real mic and Adjourn.
       Reliable, more setup.
-   c. A meeting bot speaks as its own participant (Recall.ai Output Media; see question 0).
+   c. A meeting bot speaks as its own participant (Attendee or Recall.ai; see question 0).
    d. A reads the answer from the card (the fallback in DEMO.md).
    Voice quality: browser voices are robotic; Gemini TTS would sound better (server-side, same `approve`).
 2. **Condense.** What exactly does it do for us, and is it worth the risk on demo day? Seam:
@@ -58,20 +59,50 @@ Gmail draft) still runs as `fixtures/pricing_call.jsonl` and its test.
 Question: instead of listening through the laptop microphone, can a bot join the Meet call as
 its own participant, hear everyone, and speak? This decides the listening and voice stack.
 
-**Short answer:** yes, but realistically only through a paid meeting-bot service. Google's own
-API cannot speak, the open-source bots cannot speak yet, and building our own means fighting
-Google's anti-automation checks.
+**Short answer:** yes. A bot can join as its own participant, hear everyone with names, and
+speak. With the team's rule that the whole stack is free, the option is a **self-hosted
+Attendee** bot: free for our own use, runs locally in Docker. Recall.ai and hosted Attendee are
+only free for their first 5 hours.
 
 ### The options
 
-| Option | Hears the call | Speaks in the call | Effort today | Verdict |
+| Option | Hears the call | Speaks in the call | Free? | Verdict |
 |---|---|---|---|---|
-| Google Meet Media API (official) | Yes, receive-only | **No** | Closed: no new signups | Ruled out |
-| Recall.ai (managed bot API) | Yes, per participant | **Yes** (Output Media) | ~1–1.5 h | **Recommended** |
-| Vexa (open source, self-hosted) | Yes (polling) | Not yet ("speak" returns 404) | Docker stack | Not for speaking |
-| Attendee (source-available) | Yes | Sources conflict (see below) | Docker + Postgres + Redis | Verify before relying on it |
-| Our own bot (Playwright + virtual mic) | Yes (caption scraping or audio) | Yes (virtual audio device) | High, fragile | Too risky today |
-| Laptop audio (what we have) | Yes, unlabelled mix | Unknown (echo cancellation) | Done | Keep as fallback |
+| Google Meet Media API (official) | Yes, receive-only | **No** | Free, but closed to new signups | Ruled out |
+| **Attendee, self-hosted** | Yes: Meet captions (with names) or raw audio | **Yes** | **Yes** (Elastic License 2.0, own use) | **Recommended** |
+| Attendee, hosted | Same | Same | 5 hours free, then $0.50/h | Trial only |
+| Recall.ai (hosted only) | Yes, per participant; caption transcripts free | Yes (Output Media) | 5 hours free, then $0.50/h | Trial only |
+| Vexa (open source) | Yes (polling) | Not yet ("speak" returns 404) | Yes (Apache-2.0) | Not for speaking |
+| Our own bot (Playwright + virtual mic) | Yes | Yes | Yes | Too risky today |
+| Laptop audio (what we have) | Yes, unlabelled mix | Unknown (echo cancellation) | Yes | Keep as fallback |
+
+### Recall.ai vs Attendee
+
+| | Recall.ai | Attendee |
+|---|---|---|
+| What it is | Commercial meeting-bot API | Meeting-bot API you can host yourself (or use their cloud) |
+| Licence | Proprietary; cannot self-host | Elastic License 2.0: free to self-host for our own use; may not resell it as a hosted service |
+| Price | $0.50/h after 5 free hours; captions transcription free, its own transcription +$0.15/h | Self-hosted: $0. Hosted: $0.50/h after 5 free hours |
+| Google Meet | Yes | Yes (Chrome driven by Selenium; Zoom and Teams too) |
+| How the bot joins | Guest (host admits it) or signed-in Google account | Same: guest by default, signed-in bot via `use_bot_login` |
+| Hearing | Real-time transcripts by webhook, per speaker; raw audio streams | Meet's own captions (free, speaker names) or a third-party STT; raw audio over WebSocket, mixed or per participant (16-bit PCM, 8/16/24 kHz) |
+| Speaking | Output Media: the bot runs a webpage of ours; the page hears the meeting and its audio goes into the call | Three ways: `POST /bots/{id}/speech` (text to speech via Google's TTS API), `POST /bots/{id}/output_audio` (an MP3 we generate), or real-time PCM back over the WebSocket. Also "voice agents": a webpage URL, like Recall's Output Media |
+| Network | Its cloud must reach us: public URL for webhooks and the page (a tunnel, e.g. Cloudflare's free quick tunnel) | Self-hosted on the laptop: everything is local, no tunnel |
+| Setup | Sign up, API key, tunnel: fastest | Docker image plus Postgres and Redis, create an API key: about an hour |
+| Maturity | Large company, many customers | ~750 GitHub stars, very active (~5k commits) |
+| Risks | Not free beyond the trial; third-party dependency | Self-hosting effort; Chrome in Docker is heavy (and may be slow on Apple Silicon if the image is x86-only; unverified); Google may change Meet's page; one report (1 Oct 2026, another project) says Google refuses signed-out guests from automated Chrome, so test whether Attendee's guest join still works, and fall back to a signed-in bot account |
+
+### The free path end to end
+
+| Piece | Free option | Note |
+|---|---|---|
+| Joining the call | Attendee self-hosted | Docker, Postgres, Redis on the laptop |
+| Hearing | Meet captions through Attendee | Free, real time, speaker names; or Attendee's raw audio into Gemini Live |
+| Speaking | Gemini audio (Live API native audio) streamed as PCM to Attendee, or an MP3 to `/output_audio` | Avoid Attendee's `/speech`: Google Cloud Text-to-Speech needs a billing account |
+| Models | Gemini API free tier (Flash, Flash-Lite; Live preview listed as free) | Rate limits are low and vary by project (reports: ~10–15 requests/min for Flash). Our pipeline makes an intent call per line plus agent and fact-check calls, so a 90-second demo can hit them: use Flash-Lite for the intent pass, keep the debounce, drop the model fact-check if needed. Free-tier prompts may be used by Google to improve its products; check the terms before using real meeting content. |
+| Calendar, Gmail, GitHub | Their APIs | Free within normal quotas |
+| Condense | Unknown | Check its pricing before building on it |
+| Tunnel | Not needed when everything is local | Cloudflare quick tunnel is free if it ever is |
 
 ### Details
 
@@ -81,38 +112,21 @@ Google's anti-automation checks.
 - Cannot join encrypted or watermarked meetings, refuses calls with underage accounts, and
   anyone in the call can stop it.
 
-**2. Recall.ai: the only option that covers everything we need today.**
-- **Joining:** the bot joins as a normal participant with a name we choose ("Adjourn").
-- **Admission:**
-  - As an anonymous guest it waits in the lobby until the host admits it, and Meet shows
-    "participant may not be who they claim to be".
-  - Signed in to its own Google account that is on the calendar invite, it skips the lobby.
-- **Transcripts:** live and per participant, so the meeting agent finally knows *who* said
-  what (today the laptop mic gives an unlabelled mix).
-- **Speaking (Output Media):** the bot opens a webpage we control and streams that page's
-  audio (and video) into the call. The page also receives the meeting's live audio as a
-  MediaStream, so an agent could run entirely inside it.
-- **Cost:** $0.50 per meeting hour, first 5 hours free; built-in transcription +$0.15/hour.
-- **Catches:**
-  - The Output Media page and the webhooks must be on a public URL, so the laptop needs a
-    tunnel (ngrok or Cloudflare Tunnel).
-  - A third-party dependency, plus sign-up time.
-  - Bot names containing certain words are blocked by Google.
-  - Roughly 50 concurrent bots per Google login (irrelevant for us).
+**2. Attendee and Recall.ai:** compared above. Both: bot names containing certain words are
+blocked by Google; an anonymous bot waits in the lobby until the host admits it and Meet labels
+it "participant may not be who they claim to be"; a signed-in bot on the calendar invite skips
+the lobby.
 
-**3. Open-source bots: not ready for speaking.**
-- **Vexa:** Apache-2.0, Docker Compose stack, ~2.8k stars. Its README marks mid-call "speak"
-  as not implemented (404) and WebSocket transcripts as planned; transcripts are polled.
-- **Attendee:** Elastic License 2.0. Search listings and its docs mention Google Meet with
-  text-to-speech, but the README section we read lists Google Meet support and audio output as
-  roadmap items. Test it before relying on it.
+**3. Vexa: not ready for speaking.** Apache-2.0, Docker Compose stack, ~2.8k stars. Its README
+marks mid-call "speak" as not implemented (404) and WebSocket transcripts as planned.
 
 **4. Our own bot: too risky before the deadline.**
 - People do build it: Playwright drives Chrome; captions are scraped from the page; speech goes
   in through a virtual audio device (PulseAudio on Linux, BlackHole on macOS).
 - One report says that since 1 October 2026 Google refuses a signed-out guest joining from
-  automation-controlled Chrome ("You can't join this video call"). The workaround replays clicks
-  as real keyboard and mouse input on a Linux virtual display. That is an arms race.
+  automation-controlled Chrome ("You can't join this video call"); the workaround replays
+  clicks as real keyboard and mouse input on a Linux virtual display. Attendee does this work
+  for us.
 
 **5. Laptop audio (current build): works for listening; speaking is the open risk.**
 - No bot, nothing to admit, no third party, already working end to end.
@@ -121,26 +135,30 @@ Google's anti-automation checks.
 
 ### Recommendation
 
-- If "the AI speaks in the meeting" is the headline, use **Recall.ai**. It turns our riskiest
-  step into an API call, and adds who-said-what and a visible "Adjourn" participant.
+- With the free-stack rule: **self-hosted Attendee**. It is the only free option that both
+  hears (with speaker names) and speaks.
 - Keep laptop audio as the fallback; it already works for listening.
 - The code absorbs the switch:
-  - Recall becomes a second transcript source in `backend/app/listen/`: its transcript
-    webhook calls `store.add_line()`, ideally with the speaker's name.
-  - Speaking moves to the Output Media page (or a Recall audio call from the answer agent's
-    `approve`) instead of `frontend/src/audio/speak.ts`.
+  - Attendee becomes a second transcript source in `backend/app/listen/`: its caption
+    webhook (or audio WebSocket) calls `store.add_line()`, with the speaker's name.
+  - Speaking moves from `frontend/src/audio/speak.ts` to the answer agent's `approve`:
+    generate speech with Gemini, send it to the bot.
   - The task graph, agents and panel do not change.
-- Estimated cost: about 1–1.5 hours. Sign up, API key, tunnel, "send bot to this link",
-  transcripts into the pipeline, speech through the page.
+- Estimated cost: about 2 hours (self-hosting plus wiring). If the self-hosted bot cannot get
+  into Meet, a hosted 5-hour trial (Attendee or Recall.ai) is enough to record the demo video,
+  but the stack would no longer be free.
 
-### Spikes that decide it (about 10 minutes each)
+### Spikes that decide it
 
-1. **Laptop voice:** on a real two-device Meet call, click "Let it speak". Does B hear it clearly?
-2. **Recall bot:** sign up (5 free hours), send one bot into a test Meet, admit it, watch live
-   transcripts arrive, and have it play one audio clip.
+1. **Laptop voice (10 min):** on a real two-device Meet call, click "Let it speak". Does B hear it clearly?
+2. **Attendee self-hosted (about 1 h):** run it in Docker, send a bot to a test Meet as a
+   guest, admit it, watch caption transcripts arrive, play one MP3 through `/output_audio`.
+   If the guest join is refused, try a signed-in bot account.
+3. **Gemini free tier (10 min):** run the replay with `LLM_MODE=gemini` and watch for
+   rate-limit errors (HTTP 429).
 
 If spike 1 passes, laptop audio may be enough for the demo. If it fails and spike 2 passes,
-switch to Recall.ai.
+switch to self-hosted Attendee.
 
 ### Sources
 
@@ -153,6 +171,16 @@ switch to Recall.ai.
 - [Recall.ai pricing page](https://www.recall.ai/pricing)
 - [Vexa on GitHub](https://github.com/Vexa-ai/vexa)
 - [Attendee on GitHub](https://github.com/attendee-labs/attendee)
+- [Attendee docs](https://docs.attendee.dev/)
+- [Attendee: real-time audio input and output](https://docs.attendee.dev/guides/realtimeaudio)
+- [Attendee: voice agent example](https://github.com/attendee-labs/voice-agent-example)
+- [Attendee: Google Meet platform notes](https://mintlify.wiki/attendee-labs/attendee/platforms/google-meet)
+- [Attendee pricing](https://attendee.dev/pricing)
+- [Attendee licence (Elastic License 2.0)](https://raw.githubusercontent.com/attendee-labs/attendee/main/LICENSE)
+- [Recall.ai: meeting caption transcription (free)](https://docs.recall.ai/docs/meeting-caption-transcription)
+- [Gemini API free tier limits (third-party summary)](https://tinkerllm.com/blog/gemini-api-free-tier-limits-rate-quotas/)
+- [Gemini Live free tier (third-party summary)](https://blog.laozhang.ai/en/posts/gemini-3-1-flash-live-free-api.md)
+- [Gemini Live API limits (Firebase)](https://firebase.google.com/docs/ai-logic/live-api/limits-and-specs)
 - [Gladia: Attendee integration](https://docs.gladia.io/chapters/integrations/attendee)
 - [Report of Google blocking automation-driven guest joins](https://github.com/Jaron-Wilson/odysseus/pull/152)
 - [Hermes agent's Google Meet plugin (captions + virtual mic)](https://github.com/NousResearch/hermes-agent/pull/16364)
@@ -168,7 +196,8 @@ switch to Recall.ai.
 | Google sign-in, Calendar hold, move, invite, Gmail draft | `scripts/google_auth.py`, then `scripts/smoke_google.py` | pending |
 | GitHub: create and edit an issue | `scripts/smoke_github.py` | pending |
 | Voice into the meeting (question 1) | Let it speak on a real call, B listens | pending |
-| Recall.ai bot (question 0) | Free signup, send a bot to a test Meet, transcripts + one audio clip | pending |
+| Attendee self-hosted bot (question 0) | Docker; guest bot into a test Meet; captions arrive; one MP3 via `/output_audio` | pending |
+| Gemini free tier under demo load | Replay with `LLM_MODE=gemini`; watch for 429s | pending |
 | Condense in front of the meeting agent (question 2) | implement `llm/condense.py` | pending |
 
 ## Out of scope
