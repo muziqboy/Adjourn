@@ -41,6 +41,7 @@ class Line(BaseModel):
 
 class Join(BaseModel):
     meeting_url: str
+    live_voice: bool = False  # experimental: the bot talks through Gemini Live (listen/live_voice.py)
 
 
 def build_router(store: Store, orch: Orchestrator, intent: IntentSession) -> APIRouter:
@@ -133,7 +134,7 @@ def build_router(store: Store, orch: Orchestrator, intent: IntentSession) -> API
     async def bot_join(body: Join):
         store.ensure_meeting()
         try:
-            created = await bot.join(store, body.meeting_url)
+            created = await bot.join(store, body.meeting_url, body.live_voice)
         except RuntimeError as exc:
             raise HTTPException(400, str(exc)) from exc
         return {"ok": True, "bot_id": created["id"]}

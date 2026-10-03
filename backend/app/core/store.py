@@ -122,12 +122,15 @@ class Store:
 
     # meeting bot
 
-    def set_bot(self, state: str, bot_id: str | None = None, meeting_url: str | None = None) -> None:
+    def set_bot(self, state: str, bot_id: str | None = None, meeting_url: str | None = None,
+                live_voice: bool | None = None) -> None:
         self.bot = {
             "state": state,
             "bot_id": bot_id if bot_id is not None else self.bot.get("bot_id"),
             # which call the bot is in, so calendar auto-join never sends a second bot there
             "meeting_url": meeting_url if meeting_url is not None else self.bot.get("meeting_url"),
+            # the bot talks through Gemini Live (listen/live_voice.py), not cards and clips
+            "live_voice": live_voice if live_voice is not None else self.bot.get("live_voice", False),
         }
         self.emit("bot.state", self.bot)
 

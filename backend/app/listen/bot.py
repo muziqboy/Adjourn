@@ -40,10 +40,17 @@ def in_call(store: Store) -> bool:
     return store.bot.get("state") == "in_call" and bool(store.bot.get("bot_id"))
 
 
-async def join(store: Store, meeting_url: str) -> dict:
-    store.set_bot("joining", None, meeting_url)
+def live_voice(store: Store) -> bool:
+    """The bot talks for itself through Gemini Live: no raised-hand card, no clip playback."""
+    return bool(store.bot.get("live_voice"))
+
+
+async def join(store: Store, meeting_url: str, live_voice: bool = False) -> dict:
+    store.set_bot("joining", None, meeting_url, live_voice)
     try:
-        bot = await recall.join(meeting_url)
+        from .live_voice import page_url
+
+        bot = await recall.join(meeting_url, page_url() if live_voice else None)
     except Exception:
         store.set_bot("error")
         raise

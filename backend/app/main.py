@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from . import agents
 from .api.mcp import build_mcp
 from .api.routes import build_router
+from .listen import live_voice
 from .core import voice_commands
 from .core.intent import IntentSession
 from .core.orchestrator import Orchestrator
@@ -56,10 +57,12 @@ async def public_only_webhook(request: Request, call_next):
     may reach nothing else: the panel API and /mcp have no auth and must stay on localhost."""
     public_host = urlparse(settings.public_url).hostname
     if public_host and request.headers.get("host", "").split(":")[0] == public_host:
-        if not request.url.path.startswith("/api/recall/webhook"):
+        # Recall's webhook, and the live-voice page Recall's browser loads; both check the token
+        if not request.url.path.startswith(("/api/recall/webhook", "/voice/")):
             return JSONResponse({"detail": "not available through the public URL"}, status_code=403)
     return await call_next(request)
 
 
 app.include_router(build_router(store, orch, intent))
+app.include_router(live_voice.build_router(store))
 app.mount("/", mcp_app)  # last: serves /mcp; every other path is matched by the routes above first

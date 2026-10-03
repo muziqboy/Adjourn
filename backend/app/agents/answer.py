@@ -54,6 +54,8 @@ async def approve(task: Task, ctx: RunContext) -> tuple[Artifact, str]:
     from ..core.store import store
     from ..listen import bot
 
+    if bot.in_call(store) and bot.live_voice(store):
+        return task.artifact, "The live voice answers in the call; nothing played"
     if bot.in_call(store):
         await bot.say(store, task.artifact.content or "")
         return task.artifact, "Spoken in the meeting by the bot"
@@ -65,7 +67,7 @@ async def on_waiting(task: Task) -> None:
     from ..core.store import store
     from ..listen import bot
 
-    if bot.in_call(store):
+    if bot.in_call(store) and not bot.live_voice(store):  # the live voice answers for itself
         bot.prepare_speech(task.artifact.content or "")  # ready by the time someone says "go ahead"
         await bot.raise_hand(store, task.title)
 
@@ -74,7 +76,8 @@ async def on_dismiss(task: Task) -> None:
     from ..core.store import store
     from ..listen import bot
 
-    await bot.lower_hand(store)
+    if not bot.live_voice(store):
+        await bot.lower_hand(store)
 
 
 # ---------- mock (LLM_MODE=mock) ----------

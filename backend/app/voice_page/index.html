@@ -1,0 +1,283 @@
+<!doctype html>
+<!--
+  Adjourn's live voice. Recall's bot loads this page as its camera and microphone
+  (Output Media): what this page shows is the bot's tile, what it plays the meeting hears,
+  and getUserMedia gives it the meeting's audio. Gemini Live (native audio) does the talking.
+  Served and tokened by backend/app/listen/live_voice.py.
+
+  States of the tile:
+    listening   orb breathing, ripples with the room's sound
+    hand        Adjourn has something to say but was not asked: big raised hand, reply held
+    speaking    green orb, sound bars moving with its voice
+    error       red orb with the reason
+
+  When may it speak? Gemini's proactive audio alone still answers background chatter, so:
+    - a reply plays if someone said "Adjourn" in what it answers, or within FOLLOW_UP_MS of
+      its last reply (follow-up questions without the name);
+    - any other reply is held and the hand goes up. "Go ahead, Adjourn" plays the held reply;
+      "No thanks, Adjourn" lowers the hand; a new question by name replaces it.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Adjourn voice</title>
+<style>
+  :root { --bg1: #0f1115; --bg2: #1b1f2a; --text: #f1f3f4; --muted: #9aa0a6;
+          --blue: #8ab4f8; --green: #81c995; --amber: #fdd663; --red: #f28b82; }
+  html, body { margin: 0; width: 1280px; height: 720px; overflow: hidden; color: var(--text);
+               font-family: "Google Sans", "Helvetica Neue", Arial, sans-serif;
+               background: radial-gradient(1200px 700px at 50% 40%, var(--bg2), var(--bg1)); }
+  .stage { position: relative; width: 100%; height: 100%; display: flex; flex-direction: column;
+           align-items: center; justify-content: center; gap: 34px; }
+
+  /* the orb */
+  .orb-wrap { position: relative; width: 300px; height: 300px; display: grid; place-items: center; }
+  .ring { position: absolute; inset: 0; border-radius: 50%; border: 3px solid var(--blue); opacity: 0;
+          transform: scale(calc(1 + var(--level, 0) * 0.35)); transition: transform 80ms, opacity 200ms; }
+  .orb { width: 220px; height: 220px; border-radius: 50%;
+         background: radial-gradient(circle at 35% 30%, #c6dafc 0%, var(--blue) 35%, #1a73e8 75%, #0b3a8c 100%);
+         box-shadow: 0 0 80px rgba(138,180,248,.35); animation: breathe 4s ease-in-out infinite;
+         transition: background 300ms, box-shadow 300ms; }
+  @keyframes breathe { 0%,100% { transform: scale(1) } 50% { transform: scale(1.04) } }
+  .listening .ring { opacity: .45; }
+
+  /* speaking: green orb + bars */
+  .speaking .orb { background: radial-gradient(circle at 35% 30%, #d2f0db 0%, var(--green) 35%, #188038 80%, #0b4a20 100%);
+                   box-shadow: 0 0 110px rgba(129,201,149,.5); animation: none; }
+  .bars { position: absolute; bottom: -10px; display: flex; gap: 10px; height: 70px; align-items: flex-end; opacity: 0; transition: opacity 200ms; }
+  .bars span { width: 12px; border-radius: 6px; background: var(--green); height: 10px; transition: height 70ms; }
+  .speaking .bars { opacity: 1; }
+
+  /* raised hand */
+  /* raised hand: the hand takes the orb's place, an amber ring pulses around it */
+  .hand { position: absolute; width: 210px; height: 210px; opacity: 0; transform: translateY(50px) scale(.6);
+          transition: opacity 250ms, transform 400ms cubic-bezier(.2,1.6,.4,1); filter: drop-shadow(0 12px 36px rgba(253,214,99,.5));
+          transform-origin: 50% 90%; z-index: 2; }
+  .hand-up .hand { opacity: 1; transform: none; animation: wave 1.6s ease-in-out 400ms infinite; }
+  @keyframes wave { 0%,100% { transform: rotate(0) } 25% { transform: rotate(-14deg) } 75% { transform: rotate(10deg) } }
+  .hand-up .orb { opacity: 0; transform: scale(.6); animation: none; }
+  .hand-up .ring { opacity: 1; border-color: var(--amber); border-width: 4px; animation: halo 1.6s ease-out infinite; }
+  @keyframes halo { 0% { transform: scale(.85); opacity: .9 } 100% { transform: scale(1.25); opacity: 0 } }
+  .orb { transition: background 300ms, box-shadow 300ms, opacity 250ms, transform 300ms; }
+
+  .error .orb { background: radial-gradient(circle at 35% 30%, #fce8e6 0%, var(--red) 40%, #c5221f 100%); animation: none; }
+
+  /* text */
+  .status { font-size: 58px; font-weight: 700; letter-spacing: -0.5px; text-align: center; }
+  .hint { font-size: 34px; color: var(--muted); max-width: 1080px; text-align: center; min-height: 84px; line-height: 1.25; }
+  .hand-up .hint { color: var(--amber); }
+  .badge { position: absolute; left: 44px; bottom: 36px; display: flex; align-items: center; gap: 14px;
+           font-size: 30px; font-weight: 700; color: var(--text); background: rgba(255,255,255,.07);
+           padding: 12px 22px 12px 16px; border-radius: 40px; }
+  .dot { width: 16px; height: 16px; border-radius: 50%; background: var(--green); box-shadow: 0 0 12px var(--green); }
+  .brand { position: absolute; right: 44px; bottom: 44px; font-size: 24px; color: var(--muted); }
+</style>
+</head>
+<body class="listening">
+<div class="stage">
+  <div class="orb-wrap">
+    <img class="hand" alt="" src="https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/svg/270b.svg" />
+    <div class="ring" id="ring"></div>
+    <div class="orb"></div>
+    <div class="bars" id="bars"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+  </div>
+  <div class="status" id="status">Starting…</div>
+  <div class="hint" id="hint">Say “Adjourn, …” to ask me anything</div>
+</div>
+<div class="badge"><span class="dot"></span>Adjourn</div>
+<div class="brand">AI participant · answers when asked</div>
+
+<script type="module">
+import { GoogleGenAI, Modality } from "https://cdn.jsdelivr.net/npm/@google/genai@latest/+esm";
+
+const token = new URLSearchParams(location.search).get("token");
+const $ = (id) => document.getElementById(id);
+const log = (msg) => {
+  console.log(msg);
+  fetch(`/voice/log?token=${token}`, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ msg: String(msg) }) }).catch(() => {});
+};
+function setState(state, status, hint) {
+  document.body.className = state;
+  $("status").textContent = status;
+  if (hint !== undefined) $("hint").textContent = hint;
+}
+const LISTENING = () => setState("listening", "Listening", "Say “Adjourn, …” to ask me anything");
+
+// ---- who is talking to whom --------------------------------------------------------------
+const NAME = /\b(a ?d?journ\w*|ajourn\w*|adjourn\w*)\b/i;
+const GO_AHEAD = /\b(go ahead|go for it|yes|yeah|sure|please|tell us|let'?s hear)\b/i;
+const NO_THANKS = /\b(no thanks|no thank you|not now|never ?mind|skip it|that'?s fine)\b/i;
+const FOLLOW_UP_MS = 20000;   // follow-ups without the name, after a reply
+const HAND_MS = 60000;        // the hand comes down by itself after this
+
+let heard = "";               // what the room said since the last decision
+let addressedAt = 0, lastSpokeAt = 0;
+let turn = null;              // "play" | "hold" | "drop", decided at a reply's first audio chunk
+let held = [], heldText = "", handAt = 0;
+let dropNext = false;         // after "go ahead": Gemini also answers that line; skip it
+
+function mayReplyNow() {
+  const now = Date.now();
+  return now - addressedAt < FOLLOW_UP_MS || now - lastSpokeAt < FOLLOW_UP_MS;
+}
+function raiseHand(text) {
+  handAt = Date.now();
+  setState("hand-up", "I have something to add", "Say “Go ahead, Adjourn”");
+  log(`hand up: ${text.slice(0, 160)}`);
+}
+function lowerHand(why) {
+  if (!held.length && !handAt) return;
+  held = []; heldText = ""; handAt = 0;
+  log(`hand down: ${why}`);
+  if (playing.size === 0) LISTENING();
+}
+setInterval(() => { if (handAt && Date.now() - handAt > HAND_MS) lowerHand("timeout"); }, 1000);
+
+// called as the room's speech is transcribed
+function onHeard(text) {
+  heard += text;
+  if (!NAME.test(heard)) return;
+  addressedAt = Date.now();
+  if (!handAt) return;
+  if (NO_THANKS.test(heard)) { lowerHand("no thanks"); dropNext = true; heard = ""; }
+  else if (GO_AHEAD.test(heard)) {
+    const chunks = held; const text = heldText;
+    held = []; heldText = ""; handAt = 0;
+    dropNext = true; heard = "";
+    log(`go ahead: playing held reply: ${text.slice(0, 160)}`);
+    setState("speaking", "Speaking", text.slice(-160));
+    chunks.forEach(play);
+  } else lowerHand("asked something new");
+}
+
+// ---- playback of Gemini's 24 kHz PCM, queued back to back; cleared on interruption ----
+const out = new AudioContext({ sampleRate: 24000 });
+const analyser = out.createAnalyser();
+analyser.fftSize = 256;
+analyser.connect(out.destination);
+let playHead = 0;
+const playing = new Set();
+function play(b64) {
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const pcm = new Int16Array(bytes.buffer);
+  const buf = out.createBuffer(1, pcm.length, 24000);
+  const ch = buf.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
+  const src = out.createBufferSource();
+  src.buffer = buf;
+  src.connect(analyser);
+  playHead = Math.max(playHead, out.currentTime + 0.05);  // tiny jitter buffer
+  src.start(playHead);
+  playHead += buf.duration;
+  playing.add(src);
+  if (document.body.className !== "speaking") setState("speaking", "Speaking");
+  src.onended = () => {
+    playing.delete(src);
+    if (playing.size === 0) { lastSpokeAt = Date.now(); handAt ? raiseHand(heldText) : LISTENING(); }
+  };
+}
+function stopPlayback() {
+  for (const src of playing) { try { src.stop(); } catch {} }
+  playing.clear();
+  playHead = 0;
+}
+
+// sound bars follow Adjourn's voice; the ring follows the room
+const bars = [...$("bars").children];
+const levels = new Uint8Array(analyser.frequencyBinCount);
+let roomLevel = 0;
+(function draw() {
+  analyser.getByteFrequencyData(levels);
+  bars.forEach((bar, i) => { bar.style.height = `${10 + (levels[3 + i * 4] / 255) * 60}px`; });
+  $("ring").style.setProperty("--level", roomLevel.toFixed(3));
+  requestAnimationFrame(draw);
+})();
+
+// ---- the meeting's audio, cut into 16 kHz PCM frames for Gemini ----
+const WORKLET = `
+class Pcm extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = new Int16Array(1600); this.n = 0; this.peak = 0; }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (!ch) return true;
+    for (let i = 0; i < ch.length; i++) {
+      const s = Math.max(-1, Math.min(1, ch[i]));
+      this.peak = Math.max(this.peak, Math.abs(s));
+      this.buf[this.n++] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      if (this.n === this.buf.length) {
+        this.port.postMessage({ pcm: this.buf.buffer, peak: this.peak }, [this.buf.buffer]);
+        this.buf = new Int16Array(1600); this.n = 0; this.peak = 0;
+      }
+    }
+    return true;
+  }
+}
+registerProcessor("pcm", Pcm);`;
+
+function b64(buffer) {
+  let s = "";
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+async function main() {
+  const info = await fetch(`/voice/session?token=${token}`, { method: "POST" }).then((r) => r.json());
+  log(`token ok, model ${info.model}`);
+  const ai = new GoogleGenAI({ apiKey: info.token, httpOptions: { apiVersion: "v1alpha" } });
+
+  let said = "";
+  const session = await ai.live.connect({
+    model: info.model,
+    config: { responseModalities: [Modality.AUDIO] },
+    callbacks: {
+      onopen: () => log("live open"),
+      onmessage: (m) => {
+        const sc = m.serverContent;
+        if (!sc) return;
+        if (sc.inputTranscription?.text) onHeard(sc.inputTranscription.text);
+        if (sc.interrupted) { log("interrupted"); stopPlayback(); }
+        for (const part of sc.modelTurn?.parts ?? []) {
+          if (!part.inlineData?.data) continue;
+          if (turn === null) {
+            turn = dropNext ? "drop" : mayReplyNow() ? "play" : "hold";
+            if (turn === "hold") { held = []; heldText = ""; }
+          }
+          if (turn === "play") play(part.inlineData.data);
+          else if (turn === "hold") held.push(part.inlineData.data);
+        }
+        if (sc.outputTranscription?.text) {
+          said += sc.outputTranscription.text;
+          if (turn === "play") $("hint").textContent = said.slice(-160);
+          if (turn === "hold") heldText = said;
+        }
+        if (sc.turnComplete) {
+          if (said) log(`[${turn}] heard: ${heard.slice(-160)} | said: ${said}`);
+          if (turn === "hold" && held.length) raiseHand(heldText);
+          if (turn === "drop") dropNext = false;
+          said = ""; heard = ""; turn = null;
+        }
+      },
+      onerror: (e) => { log(`live error: ${e.message ?? e}`); setState("error", "Voice error"); },
+      onclose: (e) => { log(`live closed: ${e.code} ${e.reason}`); setState("error", "Reconnecting…"); setTimeout(() => location.reload(), 2000); },
+    },
+  });
+
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const ctx = new AudioContext({ sampleRate: 16000 });
+  await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" })));
+  const node = new AudioWorkletNode(ctx, "pcm");
+  ctx.createMediaStreamSource(stream).connect(node);
+  node.port.onmessage = (e) => {
+    roomLevel = roomLevel * 0.7 + Math.min(1, e.data.peak * 2) * 0.3;
+    session.sendRealtimeInput({ audio: { data: b64(e.data.pcm), mimeType: "audio/pcm;rate=16000" } });
+  };
+  log("streaming meeting audio to Gemini Live");
+  LISTENING();
+}
+
+main().catch((e) => { log(`failed: ${e.stack ?? e}`); setState("error", "Voice error", String(e).slice(0, 120)); });
+</script>
+</body>
+</html>

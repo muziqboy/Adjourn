@@ -81,7 +81,7 @@ def _call(method: str, path: str, body: dict | None = None, version: str = "v1")
         raise RuntimeError(f"Recall {method} {path}: HTTP {err.code} {err.read().decode()[:400]}") from err
 
 
-def bot_config(meeting_url: str | None = None) -> dict:
+def bot_config(meeting_url: str | None = None, live_voice_url: str | None = None) -> dict:
     """The bot we send everywhere: named "Adjourn", Meet captions streamed to our webhook,
     able to speak. Used as-is by join() and as the `bot_config` of calendar-scheduled bots,
     so both kinds behave the same in the call and in the panel."""
@@ -108,14 +108,21 @@ def bot_config(meeting_url: str | None = None) -> dict:
             "in_call_recording": {"data": {"kind": "mp3", "b64_data": base64.b64encode(voice.silent_mp3()).decode()}}
         },
     }
+    if live_voice_url:
+        # Experimental live voice: the bot runs our page (listen/live_voice.py) as its camera
+        # and microphone instead of showing cards and playing clips.
+        del config["automatic_video_output"]
+        config["output_media"] = {"camera": {"kind": "webpage", "config": {"url": live_voice_url}}}
+        # the default bot browser is too slow for real-time audio in and out (choppy, laggy)
+        config["variant"] = {"google_meet": "web_4_core"}
     if meeting_url:
         config["meeting_url"] = meeting_url
     return config
 
 
-async def join(meeting_url: str) -> dict:
+async def join(meeting_url: str, live_voice_url: str | None = None) -> dict:
     """Send the bot to the meeting. Returns Recall's bot object (id, status...)."""
-    return await asyncio.to_thread(_call, "POST", "bot/", bot_config(meeting_url))
+    return await asyncio.to_thread(_call, "POST", "bot/", bot_config(meeting_url, live_voice_url))
 
 
 async def output_audio(bot_id: str, mp3: bytes) -> None:
