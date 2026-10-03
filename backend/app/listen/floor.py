@@ -54,6 +54,7 @@ QUIET_OPEN_S = 1.1  # longer after a fragment that does not end a sentence (Meet
 AFTER_SPEECH_S = 0.3  # sooner when speech_off says the last speaker stopped
 PAUSE_NAMED_S = 0.4  # sooner when Adjourn's name was just heard
 TALKING_STALE_S = 6.0  # a speech_on without speech_off for this long is ignored
+ECHO_WINDOW_S = 2.5  # unnamed captions this soon after Adjourn spoke are its own voice coming back
 BARGE_IN_HOLD_S = 0.6  # a person must keep talking this long to stop Adjourn (a cough or a blip does not)
 BARGE_IN_WORDS = 2  # without speech events: this many caption words while Adjourn talks stops it
 EVENT_QUIET_S = 2.5  # task news (draft ready, created) waits for a lull this long: no interrupting
@@ -186,15 +187,26 @@ class Floor:
     # --- input: who is in the call, who talks, what was said ---
 
     def is_adjourn(self, speaker: str | None, text: str = "") -> bool:
-        """Adjourn's own voice coming back through Meet: by name, or by matching what it just said
-        (the bot's captions do not always carry its name)."""
-        if speaker and speaker.strip().lower().startswith(settings.bot_name.lower()):
+        """Adjourn's own voice coming back through Meet's captions. Meet often credits it to nobody
+        ("Unknown") and words come back garbled, so three signals, any one enough:
+          - the speaker is Adjourn by name;
+          - an unnamed caption while Adjourn is speaking or just finished (ECHO_WINDOW_S);
+          - most of the caption's words are in something Adjourn said a moment ago."""
+        name = (speaker or "").strip().lower()
+        if name.startswith(settings.bot_name.lower()):
+            return True
+        recently_spoke = self.speaking or time.time() - self.last_spoke_at < ECHO_WINDOW_S
+        if name in ("", "unknown", "someone") and recently_spoke:
             return True
         if text:
-            recent = [t for _, _, t, own in list(self.lines)[-6:] if own]
-            words = text.lower()
-            return any(difflib.SequenceMatcher(None, words, r.lower()).ratio() > 0.6
-                       or (len(words) > 20 and words in r.lower()) for r in recent)
+            said = [t for ts, _, t, own in list(self.lines)[-8:] if own and time.time() - ts < 60]
+            words = set(re.findall(r"[a-z0-9']+", text.lower()))
+            for line in said:
+                theirs = set(re.findall(r"[a-z0-9']+", line.lower()))
+                if words and len(words & theirs) / len(words) >= 0.7 and len(words) >= 3:
+                    return True
+                if difflib.SequenceMatcher(None, text.lower(), line.lower()).ratio() > 0.6:
+                    return True
         return False
 
     def on_presence(self, name: str | None, joined: bool) -> None:

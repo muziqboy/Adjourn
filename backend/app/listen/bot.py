@@ -129,13 +129,13 @@ def handle_webhook(store: Store, payload: dict) -> None:
     if store.bot.get("state") in ("joining", "waiting_room"):
         store.set_bot("in_call")  # captions only flow once the bot is in
     who = recall.participant_of(payload)
+    if floor.current is not None and live_voice(store) and floor.current.is_adjourn(speaker, text):
+        return  # Adjourn hearing itself: not a line, not a participant, never a question
     if who["name"] and not (floor.current and floor.current.is_adjourn(who["name"])):
         store.ensure_call_meeting()
         store.add_participant(who["name"], who["email"], who["is_host"])
     if floor.current is not None and live_voice(store):
         floor.current.on_caption(speaker, text, final=event == "transcript.data")
-        if floor.current.is_adjourn(speaker):
-            return  # Adjourn's own words: the floor shows them; the meeting agent must not act on them
     if event == "transcript.partial_data":
         store.interim(text, speaker)
     else:

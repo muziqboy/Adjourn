@@ -339,3 +339,21 @@ def test_a_yes_said_too_early_is_kept_and_an_email_said_aloud_is_recorded(orch, 
         store.task_listeners.clear()
 
     run(body())
+
+
+def test_it_does_not_hear_itself(orch):
+    async def body():
+        floor, page = make_floor()
+        floor.apply({"action": "speak", "say": "The hold for Tuesday at two is in the calendar. Shall I send the invite?"})
+        # Meet credits its voice to nobody, mid-sentence
+        assert floor.is_adjourn(None, "The hold for Tuesday")
+        assert floor.is_adjourn("Unknown", "is in the calendar")
+        floor.spoken()
+        # garbled and credited to a person, a moment later
+        assert floor.is_adjourn("Kaleb Girmay", "the hold for tuesday at 2 is in the calendar shall i send")
+        # a real reply right after is heard
+        assert not floor.is_adjourn("Kaleb Girmay", "Yes, send it to Jany.")
+        floor.last_spoke_at -= 10
+        assert not floor.is_adjourn(None, "Okay so where were we")  # long after: unnamed is not it
+
+    run(body())
