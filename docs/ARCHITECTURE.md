@@ -7,6 +7,7 @@ is the acceptance test for everything here.
 
     Two ways to hear the call (both end in store.add_line):
       A. Recall.ai bot "Adjourn" in the Meet ─ Meet captions with names ─> POST /api/recall/webhook/  (listen/bot.py)
+         sent by the panel (/api/bot/join), or scheduled on every Meet in the calendar (listen/autojoin.py)
       B. laptop audio, below (fallback)
 
     Google Meet (Chrome) ── laptop speakers ──┐
@@ -47,7 +48,8 @@ is the acceptance test for everything here.
       integrations/      one file per external service, each with mock / links / live modes;
                          recall.py (meeting bot API), voice.py (text -> MP3, local and free)
       llm/               generate() (the only model entry point), gemini.py, condense.py
-      listen/            bot.py: the Recall bot (join, webhook -> lines, speak); audio.py: laptop mic -> Gemini Live -> lines
+      listen/            bot.py: the Recall bot (join, webhook -> lines, speak); audio.py: laptop mic -> Gemini Live -> lines;
+                         autojoin.py: calendar auto-join (Recall Calendar V2 schedules the bot on each Meet event)
     backend/tests/       the graph and the demo call, all on mocks, no network
     backend/scripts/     spikes: smoke_llm.py, google_auth.py, smoke_google.py, smoke_github.py
     frontend/src/
@@ -107,7 +109,8 @@ from `approval`.
 ## Events and routes
 
 Panel events over `WS /ws`, each `{seq, ts, type, data}`: `snapshot`, `meeting.state`,
-`transcript.delta`, `task.created`, `task.updated`, `task.trace`, `usage.updated`. The
-snapshot also carries `modes` and `agents` (labels and button text per type).
+`transcript.delta`, `bot.state`, `autojoin.state`, `task.created`, `task.updated`, `task.trace`,
+`usage.updated`. The snapshot also carries `modes`, `agents` (labels and button text per type),
+`bot` and `autojoin`.
 
 Routes are listed at the top of `backend/app/api/routes.py`.

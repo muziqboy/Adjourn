@@ -65,6 +65,9 @@ class Settings:
         self.public_url = os.getenv("PUBLIC_URL", "").rstrip("/")  # e.g. https://xyz.trycloudflare.com
         self.recall_webhook_token = os.getenv("RECALL_WEBHOOK_TOKEN") or secrets.token_urlsafe(16)
         self.bot_name = os.getenv("BOT_NAME", "Adjourn")
+        # Calendar auto-join (listen/autojoin.py): on start, connect the demo account's Google
+        # Calendar to Recall and send the bot to every Meet on it. Needs token.json.
+        self.auto_join = os.getenv("AUTO_JOIN", "false").strip().lower() in ("1", "true", "yes", "on")
 
         # --- meeting defaults (prefill the setup screen; used by replays) ---
         self.timezone = os.getenv("TIMEZONE", "Europe/Stockholm")

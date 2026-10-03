@@ -80,6 +80,28 @@ Parallel work stays painless when each person owns a folder:
 3. In the panel, paste the Meet link and press **Send Adjourn to the call**; admit "Adjourn"
    from the Meet lobby. Lines appear with speaker names; **Let it speak** makes the bot talk.
 
+Calendar auto-join (`backend/app/listen/autojoin.py`): the bot joins every Google Meet on the
+demo account's calendar by itself, through Recall's Calendar V2.
+
+1. Do steps 1 and 2 above, and "Google sign-in" steps 1 to 4 (`token.json` must include the
+   `calendar.events.readonly` and `userinfo.email` scopes; re-run `scripts/google_auth.py` if
+   it is older than that).
+2. Set `AUTO_JOIN=true` in `.env` and restart, or press **Connect calendar** on the setup
+   screen. It shows "Auto-join: on for <email> · next: <event>"; `GET /api/autojoin` too.
+3. Create the Meet event (with a Google Meet link) **at least 10 minutes ahead**: Recall needs
+   that to have a bot ready; closer to the start it may refuse (HTTP 507) and we retry every
+   minute until it works or the meeting ends.
+4. The backend and the tunnel must be running when the meeting starts, with the same
+   `PUBLIC_URL` and `RECALL_WEBHOOK_TOKEN` as when the bot was scheduled: the webhook URL is
+   fixed into the bot. Restarted cloudflared? Delete the event's bot in Recall's dashboard (or
+   recreate the event) so it is scheduled again with the new URL.
+5. When its first caption arrives, the panel switches to the live screen on its own; the bot
+   then behaves like one sent by hand (status, **Let it speak**, leave).
+
+The OAuth consent screen is in Testing mode, so Google expires the refresh token after 7 days:
+Recall's calendar then shows "disconnected". Re-run `scripts/google_auth.py` and press
+**Connect calendar** (a disconnected calendar is replaced by a new one).
+
 Free parts: Meet captions as transcripts. The bot itself: 5 free hours, then $0.50/hour.
 
 ## Antigravity (MCP)

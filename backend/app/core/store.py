@@ -6,6 +6,7 @@ All state changes go through the Store, and every change emits an event on `/ws`
     meeting.state     {state: idle | live | ended}
     transcript.delta  {text, final, speaker}   speaker: a name when the meeting bot heard it
     bot.state         {state, bot_id}           the meeting bot (none | joining | in_call | left | error)
+    autojoin.state    {enabled, email, next_event, scheduled, error}   calendar auto-join (listen/autojoin.py)
     task.created      Task
     task.updated      Task (full; the panel replaces it by id)
     task.trace        {task_id, entry}
@@ -32,6 +33,9 @@ class Store:
         self.line_listeners: list[Callable[[str], None]] = []
         # filled in by main.py: describes the registered agents and integration modes for the panel
         self.describe_agents: Callable[[], list[dict]] = lambda: []
+        # calendar auto-join status, owned by listen/autojoin.py. Not meeting state, so a reset
+        # keeps it: the calendar stays connected across meetings.
+        self.autojoin: dict = {"enabled": False}
         self._clear()
 
     def _clear(self) -> None:
@@ -68,6 +72,7 @@ class Store:
             "modes": {"llm": settings.llm_mode, "google": settings.google_mode, "github": settings.github_mode},
             "agents": self.describe_agents(),
             "bot": self.bot,
+            "autojoin": self.autojoin,
         }
 
     def reset(self) -> None:

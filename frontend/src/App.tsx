@@ -19,7 +19,7 @@ import { TaskCard } from "./components/TaskCard";
 import { Transcript } from "./components/Transcript";
 
 export default function App() {
-  const { view, start, stop, say, replay, approve, dismiss, reset, sendBot, botLeave } = useMeeting();
+  const { view, start, stop, say, replay, approve, dismiss, reset, sendBot, botLeave, connectCalendar } = useMeeting();
   const [health, setHealth] = useState<Health | null>(null);
   const [level, setLevel] = useState(0);
   const [micOn, setMicOn] = useState(false);
@@ -63,7 +63,7 @@ export default function App() {
         setMicError(`The bot could not join: ${(err as Error).message}. Type, replay, or turn the mic on.`);
       }
     };
-    return <Setup health={health} onStart={onStart} />;
+    return <Setup health={health} onStart={onStart} autojoin={view.autojoin} onConnectCalendar={connectCalendar} />;
   }
 
   const people = view.meeting ? [...view.meeting.others, view.meeting.me] : [];

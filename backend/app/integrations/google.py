@@ -8,8 +8,11 @@ wrap every call in asyncio.to_thread.
 from ..core.config import settings
 
 SCOPES = [
-    "https://www.googleapis.com/auth/calendar",
-    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/calendar",  # our hold, move and invite (schedule agent)
+    "https://www.googleapis.com/auth/calendar.events.readonly",  # what Recall needs to auto-join meetings
+    "https://www.googleapis.com/auth/gmail.compose",  # drafts (email agent)
+    "https://www.googleapis.com/auth/userinfo.email",  # Recall wants the account's email
+    "openid",
 ]
 
 _services: dict = {}

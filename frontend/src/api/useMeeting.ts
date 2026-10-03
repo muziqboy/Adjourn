@@ -2,7 +2,7 @@
 // reducer, plus the POST actions. Components never fetch on their own.
 
 import { useCallback, useEffect, useReducer, useRef } from "react";
-import type { AgentInfo, BotState, Line, MeetingContext, MeetingState, Modes, ServerEvent, Snapshot, Task, Usage } from "./contract";
+import type { AgentInfo, AutoJoinState, BotState, Line, MeetingContext, MeetingState, Modes, ServerEvent, Snapshot, Task, Usage } from "./contract";
 
 export interface MeetingView {
   connected: boolean;
@@ -15,6 +15,7 @@ export interface MeetingView {
   modes: Modes;
   agents: Record<string, AgentInfo>; // by type
   bot: BotState;
+  autojoin: AutoJoinState; // calendar auto-join
 }
 
 const initial: MeetingView = {
@@ -28,6 +29,7 @@ const initial: MeetingView = {
   modes: { llm: "?", google: "?", github: "?" },
   agents: {},
   bot: { state: "none", bot_id: null },
+  autojoin: { enabled: false },
 };
 
 type Action = { type: "connected"; value: boolean } | { type: "event"; event: ServerEvent };
@@ -43,6 +45,7 @@ function fromSnapshot(s: Snapshot): Partial<MeetingView> {
     modes: s.modes,
     agents: Object.fromEntries(s.agents.map((a) => [a.type, a])),
     bot: s.bot ?? initial.bot,
+    autojoin: s.autojoin ?? initial.autojoin,
   };
 }
 
@@ -71,6 +74,8 @@ function reducer(view: MeetingView, action: Action): MeetingView {
     }
     case "bot.state":
       return { ...view, bot: event.data };
+    case "autojoin.state":
+      return { ...view, autojoin: event.data };
     case "task.created":
     case "task.updated":
       return { ...view, tasks: upsert(view.tasks, event.data) };
@@ -149,5 +154,6 @@ export function useMeeting() {
     reset: useCallback(() => post("/api/reset"), []),
     sendBot: useCallback((meeting_url: string) => post("/api/bot/join", { meeting_url }), []),
     botLeave: useCallback(() => post("/api/bot/leave"), []),
+    connectCalendar: useCallback(() => post("/api/autojoin/connect"), []),
   };
 }

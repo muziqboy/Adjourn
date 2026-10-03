@@ -28,6 +28,7 @@ Gmail draft) still runs as `fixtures/pricing_call.jsonl` and its test.
 | 3 Oct | Runs on one laptop on localhost; in-memory state, no accounts, no database | Hackathon scope |
 | 3 Oct | **The entire stack must be free** (no paid tiers, no per-hour services beyond a free trial we do not depend on) | Team decision |
 | 3 Oct | **Meeting bot: Recall.ai** (not self-hosted Attendee). Exception to the free rule: Recall is free for the first 5 hours, then $0.50/h; its caption transcripts are free. Laptop audio stays as the fallback | Team decision. Also practical: Attendee's image is x86-only, so it runs emulated on the M1 demo laptop |
+| 3 Oct | **Adjourn joins automatically via Recall Calendar V2 (option B).** With `AUTO_JOIN=true` (or "Connect calendar"), the demo account's Google Calendar is connected to Recall and every Meet event gets the bot at start time; the pasted link stays for ad-hoc calls | No link to paste on demo day; same bot and webhook path as a manual join (`listen/autojoin.py`) |
 | 3 Oct | **Antigravity: integrate through MCP, not A2A.** Antigravity has no A2A support (no remote agents, no Agent Cards); MCP is its integration point. Adjourn serves an MCP server at `/mcp`; `.agents/mcp_config.json` points Antigravity at it | Research, see "Antigravity" below |
 
 ## Open questions (decide, then move to Decisions)

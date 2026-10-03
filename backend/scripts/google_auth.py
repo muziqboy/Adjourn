@@ -1,4 +1,5 @@
-"""Spike 3 step 5: sign in once as account A and save backend/token.json.
+"""Sign in once as the demo account (A) and save backend/token.json. Used by the Calendar and
+Gmail live modes and by Recall's calendar auto-join (app/listen/autojoin.py).
 Needs backend/credentials.json (OAuth client of type Desktop app).
 Run: uv run python scripts/google_auth.py
 On "Google hasn't verified this app": Advanced, then continue."""
@@ -16,6 +17,7 @@ from app.integrations.google import SCOPES  # noqa: E402
 if not settings.credentials_file.exists():
     sys.exit(f"Missing {settings.credentials_file}")
 flow = InstalledAppFlow.from_client_secrets_file(str(settings.credentials_file), SCOPES)
-creds = flow.run_local_server(port=0)
+# offline + consent: always return a refresh token (Recall's calendar connection needs one)
+creds = flow.run_local_server(port=0, access_type="offline", prompt="consent")
 settings.token_file.write_text(creds.to_json())
 print(f"Saved {settings.token_file}")

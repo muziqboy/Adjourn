@@ -86,6 +86,20 @@ export interface BotState {
   bot_id: string | null;
 }
 
+/** A calendar event the bot will join (or has a bot scheduled for). */
+export interface AutoJoinEvent { title: string; start_time: string; meeting_url: string }
+
+/** Calendar auto-join (backend/app/listen/autojoin.py): the bot joins Meet events by itself.
+ *  Before the first connect the backend sends only {enabled: false}. */
+export interface AutoJoinState {
+  enabled: boolean;
+  calendar_id?: string | null;
+  email?: string | null;
+  next_event?: AutoJoinEvent | null; // soonest Meet event that has not ended
+  scheduled?: AutoJoinEvent[];       // upcoming Meet events with a bot
+  error?: string | null;
+}
+
 export interface Snapshot {
   state: MeetingState;
   meeting: MeetingContext | null;
@@ -95,6 +109,7 @@ export interface Snapshot {
   modes: Modes;
   agents: AgentInfo[];
   bot: BotState;
+  autojoin?: AutoJoinState;
 }
 
 export type ServerEvent =
@@ -102,6 +117,7 @@ export type ServerEvent =
   | { seq: number; ts: number; type: "meeting.state"; data: { state: MeetingState; meeting?: MeetingContext } }
   | { seq: number; ts: number; type: "transcript.delta"; data: { text: string; final: boolean; speaker?: string | null } }
   | { seq: number; ts: number; type: "bot.state"; data: BotState }
+  | { seq: number; ts: number; type: "autojoin.state"; data: AutoJoinState }
   | { seq: number; ts: number; type: "task.created"; data: Task }
   | { seq: number; ts: number; type: "task.updated"; data: Task }
   | { seq: number; ts: number; type: "task.trace"; data: { task_id: string; entry: TraceEntry } }

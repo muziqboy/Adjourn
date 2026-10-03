@@ -21,6 +21,7 @@ from .core.intent import IntentSession
 from .core.orchestrator import Orchestrator
 from .core.config import settings
 from .core.store import store
+from .listen import autojoin
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 
@@ -36,7 +37,12 @@ mcp_app = mcp.streamable_http_app(streamable_http_path="/mcp")  # creates mcp.se
 @contextlib.asynccontextmanager
 async def lifespan(_app: FastAPI):
     async with mcp.session_manager.run():  # the MCP transport needs its task group running
+        if settings.auto_join:
+            # the loop connects the calendar itself and retries on failure, so a missing token
+            # or an unreachable Recall shows up on the panel instead of stopping the app
+            autojoin.start(store)
         yield
+        autojoin.stop()
 
 
 app = FastAPI(title="Adjourn", lifespan=lifespan)

@@ -1,16 +1,19 @@
 // The first screen: who is on the call, how Adjourn should hear it, and "Start".
 // With a Meet link, the Recall.ai bot joins the call as "Adjourn" (hears names, speaks as a
 // participant). Without one, the laptop microphone listens and the speakers talk.
+// Below the link: calendar auto-join, where the bot joins Meet events on the calendar by itself.
 
 import { useEffect, useState } from "react";
-import type { Health, MeetingContext, Person } from "../api/contract";
+import type { AutoJoinState, Health, MeetingContext, Person } from "../api/contract";
 
 interface Props {
   health: Health | null;
   onStart: (meeting: MeetingContext, meetUrl: string) => Promise<void>;
+  autojoin: AutoJoinState;
+  onConnectCalendar: () => Promise<unknown>;
 }
 
-export function Setup({ health, onStart }: Props) {
+export function Setup({ health, onStart, autojoin, onConnectCalendar }: Props) {
   const [me, setMe] = useState<Person>({ name: "", email: "" });
   const [others, setOthers] = useState<Person[]>([{ name: "", email: "" }]);
   const [meetUrl, setMeetUrl] = useState("");
@@ -76,6 +79,7 @@ export function Setup({ health, onStart }: Props) {
           With a link, Adjourn joins the call as its own participant (admit it from the lobby).
           Without one, it listens through this laptop's microphone.
         </p>
+        <AutoJoinLine autojoin={autojoin} onConnect={onConnectCalendar} />
       </fieldset>
 
       <p className="status-line">
@@ -95,6 +99,53 @@ export function Setup({ health, onStart }: Props) {
       </button>
     </form>
   );
+}
+
+/** One line: "Auto-join: on for a@b · next: Standup at 14:00", or off with a connect button. */
+function AutoJoinLine({ autojoin, onConnect }: { autojoin: AutoJoinState; onConnect: () => Promise<unknown> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const connect = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await onConnect();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const next = autojoin.next_event;
+  // the request's own error first; the backend's covers retries in its loop
+  const shown = error ?? autojoin.error;
+  return (
+    <>
+      <p className="muted tiny">
+        {autojoin.enabled ? (
+          <>
+            Auto-join: on for {autojoin.email}
+            {next ? ` · next: ${next.title} at ${when(next.start_time)}` : " · no Meet events ahead"}
+          </>
+        ) : (
+          <>
+            Auto-join: off ·{" "}
+            <button type="button" className="link" disabled={busy} onClick={connect}>
+              {busy ? "Connecting…" : "Connect calendar"}
+            </button>
+          </>
+        )}
+      </p>
+      {shown && <p className="review">{shown}</p>}
+    </>
+  );
+}
+
+/** "14:00" today, "Mon 14:00" on another day. */
+function when(iso: string): string {
+  const d = new Date(iso);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  return d.toDateString() === new Date().toDateString() ? time : `${d.toLocaleDateString([], { weekday: "short" })} ${time}`;
 }
 
 function PersonRow({ person, onChange, onRemove }: { person: Person; onChange: (p: Person) => void; onRemove?: () => void }) {

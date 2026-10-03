@@ -1,6 +1,7 @@
 """The meeting bot as a listening (and speaking) source, next to the laptop mic in audio.py.
 
     panel "Send bot" -> join() -> Recall bot joins the Meet as "Adjourn"
+    calendar event  -> autojoin.py schedules the same bot; its first webhook adopts it here
     Recall webhook  -> handle_webhook() -> store.add_line(text, speaker)   (same path as every other source)
     answer click    -> say(text) -> the bot speaks it in the call
 
@@ -37,7 +38,6 @@ def in_call(store: Store) -> bool:
 
 
 async def join(store: Store, meeting_url: str) -> dict:
-    global _poller
     store.set_bot("joining", None)
     try:
         bot = await recall.join(meeting_url)
@@ -45,9 +45,7 @@ async def join(store: Store, meeting_url: str) -> dict:
         store.set_bot("error")
         raise
     store.set_bot("joining", bot["id"])
-    if _poller and not _poller.done():
-        _poller.cancel()
-    _poller = asyncio.create_task(_poll(store, bot["id"]))
+    _start_poller(store, bot["id"])
     return bot
 
 
@@ -68,6 +66,9 @@ def handle_webhook(store: Store, payload: dict) -> None:
     parsed = recall.parse_transcript_event(payload)
     if parsed is None:
         return
+    bot_id = recall.bot_id_of(payload)
+    if bot_id and bot_id != store.bot.get("bot_id") and not _adopt(store, bot_id):
+        return  # another bot is ours right now; a second one in the call would double every line
     event, text, speaker = parsed
     if store.bot.get("state") in ("joining", "waiting_room"):
         store.set_bot("in_call")  # captions only flow once the bot is in
@@ -76,6 +77,26 @@ def handle_webhook(store: Store, payload: dict) -> None:
     else:
         store.ensure_meeting()
         store.add_line(text, speaker)
+
+
+def _adopt(store: Store, bot_id: str) -> bool:
+    """A bot we did not send (scheduled from the calendar by autojoin.py) is talking to our
+    webhook. Make it the meeting bot, unless one we track is still active. Returns whether the
+    bot is now ours."""
+    if store.bot.get("bot_id") and store.bot.get("state") not in ("none", "left", "error"):
+        return False
+    log.info("adopting bot %s (scheduled from the calendar)", bot_id)
+    store.ensure_meeting()  # the panel leaves the setup screen
+    store.set_bot("in_call", bot_id)  # it sends captions, so it is in the call
+    _start_poller(store, bot_id)  # status changes and "left", like a bot sent by join()
+    return True
+
+
+def _start_poller(store: Store, bot_id: str) -> None:
+    global _poller
+    if _poller and not _poller.done():
+        _poller.cancel()
+    _poller = asyncio.create_task(_poll(store, bot_id))
 
 
 async def _poll(store: Store, bot_id: str) -> None:

@@ -13,6 +13,8 @@ session and returns. See docs/ARCHITECTURE.md for the full list with payloads.
     POST /api/reset                forget everything (and every mock object)
     POST /api/bot/join             {meeting_url}: send the Recall bot into the Meet
     POST /api/bot/leave
+    GET  /api/autojoin             calendar auto-join status (listen/autojoin.py)
+    POST /api/autojoin/connect     connect the demo account's calendar to Recall, start the loop
     POST /api/recall/webhook/      Recall's live transcripts (?token= must match)
     *    /mcp                      MCP server for Antigravity and other agents (api/mcp.py)
 """
@@ -30,7 +32,7 @@ from ..core.contract import MeetingContext
 from ..core.intent import IntentSession
 from ..core.orchestrator import Orchestrator
 from ..core.store import Store
-from ..listen import audio, bot
+from ..listen import audio, autojoin, bot
 
 
 class Line(BaseModel):
@@ -140,6 +142,19 @@ def build_router(store: Store, orch: Orchestrator, intent: IntentSession) -> API
     async def bot_leave():
         await bot.leave(store)
         return {"ok": True}
+
+    @router.get("/api/autojoin")
+    async def autojoin_status():
+        return autojoin.status
+
+    @router.post("/api/autojoin/connect")
+    async def autojoin_connect():
+        try:
+            await autojoin.connect(store)
+        except Exception as exc:  # missing token, Recall refused: the panel shows the sentence
+            raise HTTPException(400, str(exc)) from exc
+        autojoin.start(store)
+        return autojoin.status
 
     @router.post("/api/recall/webhook/")
     async def recall_webhook(request: Request, token: str = ""):
