@@ -86,7 +86,14 @@ const FACES: Record<string, CardFace> = {
       const end = new Date(a.end);
       return `${day(start)}, ${time(start)}–${time(end)}${a.note ? ` · ${a.note}` : ""}${a.delivered ? " · invite sent" : ""}`;
     },
-    links: openLink("Open in Calendar"),
+    links: (t) => (
+      <>
+        {t.artifact?.meet_link ? (
+          <a className="button small" href={t.artifact.meet_link} target="_blank" rel="noreferrer">Join Meet</a>
+        ) : null}
+        {openLink("Open in Calendar")(t)}
+      </>
+    ),
   },
   email: {
     facts: (t, people) => {

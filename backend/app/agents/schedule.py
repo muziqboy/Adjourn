@@ -1,11 +1,15 @@
 """Schedule agent: someone agrees to meet; it books a private hold in the user's calendar, and
 on the click invites the other participants.
 
-    run      one structured call extracts {title, start, end}; then code checks the calendar,
-             moves to the nearest free slot on the same day if needed, and creates the hold or
-             moves the existing one (same event id on every revision)
+    run      one structured call extracts {title, start, end, flexible}; then code checks the
+             calendar, moves to the nearest free slot on the same day if needed, and creates the
+             hold or moves the existing one (same event id on every revision). "Next week" with
+             no day or time (flexible) takes the first free slot of next week from Monday 10:00.
+             Every event has a Google Meet link, shown on the card and carried by the invite
     verify   code only: future, 15 min to 2 h, participants only, slot free
-    click    "Send invite": adds the attendees and emails them ("Send update" after a steer)
+    click    "Send invite": adds everyone on the call and emails them the invite with the Meet
+             link ("Send update" after a steer). Emails come from the meeting's own calendar
+             invite, else from CONTACTS in .env (Meet does not share them)
 
 This is the fixed pipeline from the plan's cut order (item 3). A tool-calling loop
 (get_busy / set_event as model tools) is an optional upgrade.
@@ -28,8 +32,10 @@ SYSTEM = (
     "You turn a scheduling request from a call into exactly one calendar event. Resolve relative "
     "dates against the current date given. Default duration 30 minutes. Return start and end as "
     "ISO 8601 with the UTC offset of the given timezone. The title is short, like "
-    "'Review: search latency'."
+    "'Review: search latency'. If the request names no specific day or time (\"next week\", "
+    "\"sometime soon\"), set flexible to true; otherwise false."
 )
+FLEX_START, FLEX_END = time(10, 0), time(16, 0)  # where a flexible "next week" meeting may land
 DAY_START, DAY_END = time(8, 0), time(20, 0)  # the window for moving to a free slot
 
 
@@ -37,6 +43,7 @@ class EventSpec(BaseModel):
     title: str
     start: str  # ISO 8601 with offset
     end: str
+    flexible: bool = False  # no specific day or time was said ("next week"): code picks the slot
 
 
 async def run(task: Task, ctx: RunContext) -> Artifact:
@@ -55,7 +62,12 @@ async def run(task: Task, ctx: RunContext) -> Artifact:
     start, end = _aware(spec.start, tz), _aware(spec.end, tz)
     if end <= start:
         end = start + timedelta(minutes=30)
-    ctx.trace("llm", f"Requested slot: {human_slot(start, end)}")
+    if spec.flexible:
+        picked = await _first_free_next_week(now, end - start, ctx.external_id)
+        start, end = picked, picked + (end - start)
+        ctx.trace("llm", f"No day or time given: first free slot next week, {human_slot(start, end)}")
+    else:
+        ctx.trace("llm", f"Requested slot: {human_slot(start, end)}")
 
     day_start = datetime.combine(start.date(), DAY_START, start.tzinfo)
     day_end = datetime.combine(start.date(), DAY_END, start.tzinfo)
@@ -74,14 +86,17 @@ async def run(task: Task, ctx: RunContext) -> Artifact:
                 start, end = free, free + (end - start)
 
     existing = ctx.external_id
-    invitees = [p.email for p in ctx.meeting.others]
+    invitees = [e for e in (email_of(p) for p in ctx.meeting.others) if e]
     event_id, link = await ctx.write_external(
         lambda current: calendar.set_event(current, spec.title, start, end, _description(task, ctx), invitees)
     )
     ctx.trace("tool", f"{'Moved the hold to' if existing else 'Created a hold:'} {human_slot(start, end)} ({note})")
     previous = ctx.previous
+    meet = calendar.meet_link(event_id) or (previous.meet_link if previous else None)
+    if meet and not (previous and previous.meet_link == meet):
+        ctx.trace("tool", f"Google Meet link attached: {meet}")
     return Artifact(
-        kind="event", external_id=event_id, link=link, title=spec.title,
+        kind="event", external_id=event_id, link=link, title=spec.title, meet_link=meet,
         start=start.isoformat(), end=end.isoformat(), note=note,
         attendees=previous.attendees if previous else [],
         delivered=previous.delivered if previous else False,
@@ -97,7 +112,7 @@ async def verify(task: Task, art: Artifact, ctx: RunContext) -> list[str]:
         problems.append("The end is before the start.")
     elif not timedelta(minutes=15) <= end - start <= timedelta(hours=2):
         problems.append("The duration is not between 15 minutes and 2 hours.")
-    known = {p.email.lower() for p in ctx.meeting.others}
+    known = {e.lower() for e in (email_of(p) for p in ctx.meeting.others) if e}
     if any(a.lower() not in known for a in art.attendees):
         problems.append("An attendee is not a participant of this call.")
     busy = await calendar.get_busy(start, end, exclude_id=art.external_id)
@@ -109,7 +124,10 @@ async def verify(task: Task, art: Artifact, ctx: RunContext) -> list[str]:
 
 
 async def approve(task: Task, ctx: RunContext) -> tuple[Artifact, str]:
-    attendees = [p.email for p in ctx.meeting.others if p.email]  # Meet does not always share emails
+    attendees = [e for e in (email_of(p) for p in ctx.meeting.others) if e]
+    missing = [p.name for p in ctx.meeting.others if not email_of(p)]
+    if missing:  # Meet does not share emails: say who could not be invited, never guess
+        ctx.trace("info", f"No email for {', '.join(missing)}: add them to CONTACTS in .env to invite them")
     lock = ctx.orch.locks.setdefault(task.id, asyncio.Lock())
     async with lock:  # never invite while a revision is still moving the event
         await calendar.invite(ctx.external_id, attendees)
@@ -125,6 +143,33 @@ def _description(task: Task, ctx: RunContext) -> str:
     related = describe_inputs(ctx.inputs)
     text = f"Agreed on a call with Adjourn: {task.brief}"
     return text if related == "(none)" else f"{text}\n\nAbout:\n{related}"
+
+
+def email_of(person) -> str:
+    """A participant's email: from the call (or its calendar invite), else CONTACTS by full or
+    first name. Empty when unknown."""
+    if person.email:
+        return person.email
+    name = (person.name or "").strip().lower()
+    return settings.contacts.get(name) or (settings.contacts.get(name.split()[0]) if name else "") or ""
+
+
+async def _first_free_next_week(now: datetime, duration: timedelta, exclude_id: str | None) -> datetime:
+    """The first free slot of next week, weekdays FLEX_START-FLEX_END in 30-minute steps.
+    Without a busy check (links mode) or with every slot taken: Monday at FLEX_START."""
+    monday = (now + timedelta(days=7 - now.weekday())).date()
+    first = datetime.combine(monday, FLEX_START, now.tzinfo)
+    for offset in range(5):
+        day = monday + timedelta(days=offset)
+        start, last = datetime.combine(day, FLEX_START, now.tzinfo), datetime.combine(day, FLEX_END, now.tzinfo)
+        busy = await calendar.get_busy(start, last, exclude_id=exclude_id)
+        if busy is None:
+            return first
+        while start + duration <= last:
+            if not _overlaps(start, start + duration, busy):
+                return start
+            start += timedelta(minutes=30)
+    return first
 
 
 def _aware(value: str, tz: ZoneInfo) -> datetime:
@@ -166,9 +211,12 @@ def mock_intent(m: MockIntent) -> None:
     existing = next((t for t in m.tasks if t.type == "schedule" and t.status != "dismissed"), None)
     previous = brief_time(existing.brief) if existing else None
     when = parse_when(m.text, m.now, previous)
-    if when is None:
-        return
     name = m.meeting.others[0].name if m.meeting.others else "the team"
+    if when is None:
+        if not existing and re.search(r"\bnext week\b", m.text) and re.search(MEET_WORDS, m.text):
+            m.ops.append(Op(op="create", type="schedule", title="Progress check-in",
+                            brief=f"Book a 30-minute meeting next week with everyone on the call; no day or time given. Said: “{m.raw.strip()}”"))
+        return
     if existing and re.search(STEER_WORDS, m.text):
         m.ops.append(Op(op="update", id=existing.id, brief=schedule_brief(name, when, m.meeting.timezone),
                         reason=f"Moved to {when:%A} {when.day} {when:%B} at {when:%H:%M}"))
@@ -223,16 +271,20 @@ def brief_time(brief: str) -> datetime | None:
 
 def _mock_event(task: Task, now: datetime) -> EventSpec:
     start = brief_time(task.brief) or (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
-    return EventSpec(title=task.title, start=start.isoformat(), end=(start + timedelta(minutes=30)).isoformat())
+    flexible = brief_time(task.brief) is None and "next week" in task.brief.lower()
+    return EventSpec(title=task.title, start=start.isoformat(), end=(start + timedelta(minutes=30)).isoformat(),
+                     flexible=flexible)
 
 
 AGENT = AgentSpec(
     type="schedule",
     label="Schedule",
     intent_doc=(
-        "books one calendar event with the participants when they agree to meet. It creates a "
-        "private hold at once; the invite goes out only after a click. When they change the time, "
-        "update this task; never create a second one."
+        "books one calendar event, with a Google Meet link, for everyone on the call when they "
+        "agree to meet (\"let's meet next week to talk about the progress\"). Keep a vague time "
+        "vague in the brief (\"next week, no day or time given\"): the agent picks the first free "
+        "slot. It creates a private hold at once; the invite (with the Meet link) goes out only "
+        "after a click. When they change the time, update this task; never create a second one."
     ),
     run=run,
     verify=verify,

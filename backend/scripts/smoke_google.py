@@ -22,12 +22,18 @@ async def main():
     start = (datetime.now(tz) + timedelta(days=1)).replace(hour=15, minute=0, second=0, microsecond=0)
     end = start + timedelta(minutes=30)
 
+    allowed = await asyncio.to_thread(
+        lambda: service("calendar").calendars().get(calendarId="primary").execute()
+        .get("conferenceProperties", {}).get("allowedConferenceSolutionTypes", [])
+    )
+    print("conference types allowed:", allowed, "" if "hangoutsMeet" in allowed else "<- NO Google Meet: use a Workspace account")
     print("busy tomorrow:", await calendar.get_busy(start.replace(hour=8), start.replace(hour=20)))
     event_id, link = await calendar.set_event(None, "Adjourn smoke test", start, end, "test", [])
     print("hold:", event_id, link)
+    print("meet link:", calendar.meet_link(event_id) or "MISSING")
     moved, _ = await calendar.set_event(event_id, "Adjourn smoke test", start + timedelta(hours=1), end + timedelta(hours=1), "moved", [])
     assert moved == event_id, "move created a second event"
-    print("moved +1h, same id")
+    print("moved +1h, same id, meet link:", calendar.meet_link(event_id) or "MISSING")
     await calendar.invite(event_id, [settings.guest_email])
     input(f"Invite sent to {settings.guest_email}. Check B's inbox, then press Enter to delete the event... ")
     await asyncio.to_thread(
