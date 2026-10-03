@@ -31,6 +31,7 @@ Gmail draft) still runs as `fixtures/pricing_call.jsonl` and its test.
 | 3 Oct | **Bot voice: Gemini speech model** (`gemini-3.8-flash-tts`, voice Kore), rendered while the hand is up; macOS speech only as a fallback | The macOS voices sounded robotic |
 | 3 Oct | **Meeting bot: Recall.ai** (not self-hosted Attendee). Exception to the free rule: Recall is free for the first 5 hours, then $0.50/h; its caption transcripts are free. Laptop audio stays as the fallback | Team decision. Also practical: Attendee's image is x86-only, so it runs emulated on the M1 demo laptop |
 | 3 Oct | **Adjourn joins automatically via Recall Calendar V2 (option B).** With `AUTO_JOIN=true` (or "Connect calendar"), the demo account's Google Calendar is connected to Recall and every Meet event gets the bot at start time; the pasted link stays for ad-hoc calls | No link to paste on demo day; same bot and webhook path as a manual join (`listen/autojoin.py`) |
+| 3 Oct | **Linear: a Gemini agent with Linear's MCP server, not delegated to Antigravity** (answers open question 7). `agents/linear.py`: gemini-3.8-flash plans with Linear's read-only MCP endpoint, and only the click ("Do it in Linear") gets the write endpoint. Off by default: add `linear` to `AGENTS` | Measured: Antigravity managed agent ~220 s for a simple lookup; Gemini + Linear MCP ~20-37 s to plan, ~7 s to write (spike below) |
 | 3 Oct | **Antigravity: integrate through MCP, not A2A.** Antigravity has no A2A support (no remote agents, no Agent Cards); MCP is its integration point. Adjourn serves an MCP server at `/mcp`; `.agents/mcp_config.json` points Antigravity at it | Research, see "Antigravity" below |
 
 ## Open questions (decide, then move to Decisions)
@@ -58,8 +59,9 @@ Gmail draft) still runs as `fixtures/pricing_call.jsonl` and its test.
    only when nobody on the call answers within a few seconds?
 6. **Partner technology.** Confirm with an organiser that Gemini (Live, Flash, Search
    grounding) counts, and whether Condense earns a side prize.
-7. **Should Adjourn delegate tasks to Antigravity** (its connectors doing the work), or only
-   be steered by it over MCP? See "Antigravity" above.
+7. ~~**Should Adjourn delegate tasks to Antigravity** (its connectors doing the work), or only
+   be steered by it over MCP? See "Antigravity" above.~~ Decided: no, too slow for a live call;
+   Linear work goes to a Gemini agent with Linear's MCP server (see Decisions).
 
 ## Research: can a bot join the meeting? (3 October 2026)
 
@@ -246,6 +248,7 @@ Sources: [Antigravity MCP docs](https://antigravity.google/docs/mcp/),
 | ~~Attendee self-hosted bot~~ | dropped for Recall.ai (team decision) | — |
 | Recall.ai bot | `.env` key + tunnel; panel "Send Adjourn to the call"; admit it; captions arrive with names; "Let it speak" plays in the call | pending: needs a Recall account and a tunnel |
 | Antigravity over MCP | open this repo in Antigravity with the backend running; ask its agent to list Adjourn's tasks | pending |
+| Linear: Antigravity managed agent vs Gemini + Linear MCP | `scripts/smoke_linear.py <assignee-email>` (plan + create one ticket in a test workspace) | **Gemini + MCP (3 Oct, 16:55).** Antigravity managed agent (`antigravity-preview-09-2026`, Linear MCP read-only): 221 s, wandered through its sandbox. gemini-3.8-flash with Linear's MCP as a native remote tool: plan 19-37 s, `save_issue` 7 s; ticket created and assigned |
 | Gemini free tier under demo load | Replay with `LLM_MODE=gemini`; watch for 429s | **Pass (3 Oct, 15:29).** No 429s. Real Gemini reproduced the demo: answer, issue depending on answer and meeting, meeting moved to Fri 9 Oct 14:00, no cards from small talk |
 | Condense in front of the meeting agent (question 2) | implement `llm/condense.py` | pending |
 
