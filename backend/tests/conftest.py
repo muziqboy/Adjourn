@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app import integrations
+from app.core import company
 from app.core.config import FIXTURES, settings
 from app.core.orchestrator import Orchestrator
 from app.core.store import default_meeting, store
@@ -18,6 +19,9 @@ settings.google_mode = "mock"
 settings.github_mode = "mock"
 settings.mock_delay = 0.02
 settings.intent_debounce = 0.05
+# only the committed (synthetic) company file, never the developer's local one
+company.USE_LOCAL = False
+company.reload()
 # the fixtures' people, whatever the developer's .env says
 settings.me_name, settings.me_email = "Alex", "demo-a@gmail.com"
 settings.guest_name, settings.guest_email = "Bea", "demo-b@gmail.com"

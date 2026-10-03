@@ -357,3 +357,16 @@ def test_it_does_not_hear_itself(orch):
         assert not floor.is_adjourn(None, "Okay so where were we")  # long after: unnamed is not it
 
     run(body())
+
+
+def test_company_directory_and_everyones_calendar():
+    from datetime import date
+
+    from app.core import company
+
+    assert company.find("Jany")["role"].startswith("Lead engineer")
+    assert company.email_for("Chinmay") == "chinmay.pant@meetagent.example"
+    tuesday = date(2026, 10, 6)  # Jany: Architecture review 13-15, Chinmay: partner call 10-12
+    free = company.common_free(["Jany Koulen", "Chinmay Pant"], tuesday)
+    assert not any(s.hour == 13 for s, _ in free) and any(s.hour == 15 for s, _ in free)
+    assert "Meetagent AB" in company.briefing()

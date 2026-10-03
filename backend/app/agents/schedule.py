@@ -60,18 +60,25 @@ async def run(task: Task, ctx: RunContext) -> Artifact:
     day_start = datetime.combine(start.date(), DAY_START, start.tzinfo)
     day_end = datetime.combine(start.date(), DAY_END, start.tzinfo)
     busy = await calendar.get_busy(day_start, day_end, exclude_id=ctx.external_id)
+    # everyone's time, not only the organiser's: the team calendars from the company directory
+    team = _team_busy(task, ctx, day_start, day_end)
     if busy is None:
-        note = "no busy check (links mode)"
+        note = "no busy check on your calendar (links mode)"
+        busy = []
     else:
-        ctx.trace("tool", f"Checked calendar: {len(busy)} other events that day")
+        ctx.trace("tool", f"Checked your calendar: {len(busy)} other events that day")
         note = "no conflicts"
-        if _overlaps(start, end, busy):
-            free = _nearest_free(start, end, busy, now)
-            if free is None:
-                note = f"{start:%H:%M} is taken and the day is full"
-            else:
-                note = f"{start:%H:%M} was taken, moved to {free:%H:%M}"
-                start, end = free, free + (end - start)
+    if team:
+        ctx.trace("tool", "Team calendars: " + "; ".join(f"{s:%H:%M}-{e:%H:%M} {what}" for s, e, what in team[:6]))
+    everyone = busy + [(s, e) for s, e, _ in team]
+    if _overlaps(start, end, everyone):
+        clash = next((what for s, e, what in team if s < end and e > start), "your calendar")
+        free = _nearest_free(start, end, everyone, now)
+        if free is None:
+            note = f"{start:%H:%M} is taken ({clash}) and the day is full"
+        else:
+            note = f"{start:%H:%M} was taken ({clash}), moved to {free:%H:%M}"
+            start, end = free, free + (end - start)
 
     existing = ctx.external_id
     invitees = [p.email for p in ctx.meeting.others]
@@ -103,9 +110,25 @@ async def verify(task: Task, art: Artifact, ctx: RunContext) -> list[str]:
     busy = await calendar.get_busy(start, end, exclude_id=art.external_id)
     if busy:
         problems.append("The slot is not free in the calendar.")
+    clashes = _team_busy(task, ctx, start, end)
+    if clashes:
+        problems.append(f"Someone is busy then: {clashes[0][2]}.")
     if not problems:
         ctx.trace("verify", "✓ future, 15 min–2 h, participants only" + (", slot free" if busy is not None else ""))
     return problems
+
+
+def _team_busy(task: Task, ctx: RunContext, start: datetime, end: datetime) -> list:
+    """Busy blocks of the organiser and the invitees from the company directory's calendars."""
+    from ..core import company
+
+    emails, _ = invitees(task, ctx)
+    who = [ctx.meeting.me.email or ctx.meeting.me.name, *emails]
+    blocks = []
+    for person in who:
+        if person:
+            blocks += company.busy(person, start, end)
+    return sorted(blocks)
 
 
 def invitees(task: Task, ctx: RunContext) -> tuple[list[str], list[str]]:

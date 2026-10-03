@@ -88,7 +88,7 @@ SPEAKING ("action")
 - If told to stop, be quiet, or "that's enough": stay silent. Do not even acknowledge it.
 - Like a sharp, friendly colleague: English, answer first, one to three short spoken sentences, first names, round
   numbers, no lists, URLs, markdown or emoji. Times in 12-hour form the way people say them ("two pm", "Tuesday the
-  sixth at two"), never "fourteen hundred" or "fourteen hours". Never filler ("I'm here", "ready to assist", "great
+  sixth at two", "four pm"), never digits like "16:00", never "fourteen hundred" or "fourteen hours". Never filler ("I'm here", "ready to assist", "great
   question"), never talk about yourself or your reasoning. "say" is YOUR line: never repeat or echo what a
   participant just said ("Yes, please go ahead" is their line, yours is "Creating it now."). Google Search for facts.
 
@@ -116,6 +116,15 @@ Agents do work for the meeting:
   say so.
 - State facts about work only as the task list shows them. A ticket exists only when the list says CREATED with its
   identifier. If something failed, say so plainly.
+
+THE COMPANY (what you know about the company this meeting is in; use it, it is your context)
+{company}
+
+SCHEDULING
+- Propose meeting times from "When everyone in the call is free" below (it already combines their calendars,
+  working hours, lunch and no-meeting Friday afternoons). Pick the earliest window that fits what they asked
+  ("later in the week" = Wednesday to Friday). Say whose calendar ruled out an obvious time if it helps.
+- A proposal is a question: add no schedule task until someone agrees to that time.
 
 PEOPLE AND EMAILS
 - Captions garble names too: match them to the people in the call ("Johnny" may be Jany, "Kaylub" may be Kaleb). Do not invent people.
@@ -402,9 +411,13 @@ class Floor:
         spoke = (f"You last spoke {int(now - self.last_spoke_at)} s ago." if self.last_spoke_at else "You have not spoken yet.")
         quiet = int(now - self.last_caption_at) if self.last_caption_at else 0
         room = ("BUSY: people are talking" if self.room_busy() else f"quiet for {quiet} s")
+        from ..core import company
+
+        free = company.availability(sorted(names), datetime.now().astimezone())
         return (
             f"Now: {datetime.now().astimezone():%A %d %B %Y %H:%M %Z}.\n"
             f"People in the call ({len(names)}):\n{roster}\n\n"
+            f"When everyone in the call is free:\n{free}\n\n"
             f"Work in this meeting:\n" + ("\n".join(self._describe(t) for t in tasks) or "(none yet)") + "\n\n"
             f"Your hand: {'RAISED, point: ' + self.hand if self.hand else 'down'}. {spoke} Room: {room}.\n\n"
             f"Transcript (oldest first; '>>' marks what is new since your last decision):\n" + "\n".join(transcript)
@@ -412,8 +425,10 @@ class Floor:
         )
 
     def system(self) -> str:
+        from ..core import company
+
         docs = "\n".join(f"- {spec.type}: {spec.intent_doc}" for spec in agents.enabled() if spec.type not in ("answer", "research"))
-        return SYSTEM.format(agents=docs or "- (none enabled)")
+        return SYSTEM.format(agents=docs or "- (none enabled)", company=company.briefing())
 
     # --- the decision ---
 

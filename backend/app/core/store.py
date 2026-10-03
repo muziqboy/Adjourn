@@ -124,7 +124,10 @@ class Store:
         if not name or name.strip().lower() in ("unknown", "someone", "—"):
             return  # captions without a speaker name are not a person
         meeting = self.ensure_meeting()
-        email = email or self.attendee_emails.get(name.lower(), "")
+        from . import company
+
+        # Meet shares no emails: the calendar invite, then the company directory (aliases too)
+        email = email or self.attendee_emails.get(name.lower(), "") or company.email_for(name) or ""
         me = meeting.me
         if me.name.lower() == name.lower() or (email and me.email and me.email.lower() == email.lower()):
             if email and not me.email:
