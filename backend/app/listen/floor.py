@@ -1,28 +1,35 @@
-"""The floor: Adjourn's turn-taking mind in a live meeting. Decides when to speak, when to raise
-its hand, and when to stay silent. The voice page (live_voice.py) only says what this decides.
+"""The floor: Adjourn's mind in a live meeting (live-voice mode). One brain decides, at every
+pause, what Adjourn says AND what work it starts, changes, approves or drops.
 
-    Meet captions (speaker names)   --> on_caption()   what was said
-    Recall speech_on / speech_off   --> on_speech()    who is talking right now (fast)
-    nobody talking + something new  --> decide(): one small, fast Gemini call (with Google
-        Search) sees the whole picture and returns
-        {"action": "speak" | "raise_hand" | "lower_hand" | "silent", "say", "point", "reason"}
-    speak       -> {"type": "say", "text"} to the voice page, which speaks it via Gemini Live
+    Meet captions (speaker names)    --> on_caption()   what was said, by whom
+    Recall speech_on / speech_off    --> on_speech()    barge-in: a person talking stops Adjourn
+    Recall join / leave              --> on_presence()  who is in the call
+    task changes (orchestrator)      --> on_task()      "draft ready", "created MEE-7", "failed"
+    the room pauses + something new  --> decide(): one small, fast Gemini call (Google Search
+        available) sees the whole picture and returns
+
+        {"action": "speak" | "raise_hand" | "lower_hand" | "silent", "say", "point",
+         "tasks":   [Op, ...]   create / update work for the agents (Linear, GitHub, calendar...)
+         "approve": [task id]   a participant clearly said yes to that waiting draft (voice approval)
+         "dismiss": [task id]   they dropped it
+         "reason"}
+
+    speak       -> {"type": "say", "text"} to the voice page (Gemini Live says it verbatim)
     raise_hand  -> {"type": "hand", "up": true, "point"}: the bot's tile shows a raised hand
-    a person starts talking while Adjourn speaks -> {"type": "stop"} (barge-in)
 
-Timing: decide when the captions go quiet (QUIET_S without a new caption word) and something new
-was said. Captions, not Meet's "is talking" indicator, decide this: a noisy microphone keeps the
-indicator on without saying anything. speech_on is still the fastest way to stop Adjourn when a
-person starts talking over it (barge-in), and speech_off lets it decide sooner.
+Why one brain: when speaking and task creation were separate, Adjourn promised work it could not
+do ("I'll create those tickets now"), claimed results it never saw ("it's assigned to you"), and
+the task side, blind to speaker names, reassigned to the wrong person. Here the same decision
+sees who said what and every task's real state, and only reports what the task list shows. In
+live-voice mode the transcript-only intent pass stands down (core/intent.py).
 
-Who is in the call: Recall's join/leave events, plus everyone heard in the captions.
+Voice approval: only task types in VOICE_APPROVAL (default: linear) may be approved by voice,
+only while waiting for approval, and the prompt requires a clear yes to that item. The
+orchestrator's approve() is the same door the panel button uses.
 
-Why a separate mind: a live audio model answers whenever anyone stops talking, hears one mixed
-stream without names, and knows nothing about the meeting. Here every decision is deliberate,
-made with who-said-what, Adjourn's own past lines, its research and tasks, and its hand state.
-
-Why captions: Meet's captions carry speaker names. They garble words ("Adjourn" -> "a journ"),
-so the prompt tells the model to infer the intended words.
+Timing: decide when captions go quiet (a caption that ends a sentence: QUIET_S; a fragment:
+QUIET_OPEN_S). Captions, not Meet's "is talking" indicator, decide this: a noisy microphone keeps
+the indicator on without saying anything.
 """
 
 import asyncio
@@ -32,97 +39,117 @@ import logging
 import re
 import time
 from collections import deque
+from datetime import datetime
 
-from .. import llm
+from .. import agents, llm
 from ..core.config import settings
+from ..core.contract import Op, Task
 from ..core.store import Store
 
 log = logging.getLogger("adjourn.floor")
 
-QUIET_S = 0.6  # captions quiet this long after something new = the room paused; decide
+QUIET_S = 0.6  # captions quiet this long after a finished sentence = the room paused; decide
+QUIET_OPEN_S = 1.1  # longer after a fragment that does not end a sentence (Meet splits captions)
 AFTER_SPEECH_S = 0.3  # sooner when speech_off says the last speaker stopped
 PAUSE_NAMED_S = 0.4  # sooner when Adjourn's name was just heard
-TALKING_STALE_S = 6.0  # a speech_on without speech_off for this long no longer blocks decisions
+TALKING_STALE_S = 6.0  # a speech_on without speech_off for this long is ignored
 BARGE_IN_WORDS = 2  # without speech events: this many caption words while Adjourn talks stops it
+MEMORY_LINES = 150  # transcript lines the mind sees (about 10-15 minutes of a busy call)
 FLOOR_MODEL: str | None = settings.floor_model  # tuned with scripts/eval_floor.py
 FLOOR_THINKING: str | None = settings.floor_thinking
 NAME = re.compile(r"\b(a ?d?journ\w*|ajourn\w*|adjourn\w*)\b", re.I)
+EVENT = "—"  # the speaker of event lines (joins, task changes) in the transcript
 
-SYSTEM = """You are the turn-taking mind of Adjourn, an AI teammate attending a live video meeting as a participant.
-A separate voice says aloud exactly the words you choose. Each time the room pauses you decide one action.
+SYSTEM = """You are the mind of Adjourn, an AI teammate attending a live video meeting as a participant.
+A separate voice says aloud exactly the words you choose. Each time the room pauses you decide what to say and
+what work to start. Be a useful colleague: listen, help when asked, get agreed work done, never overstep.
 
 You see the live transcript with speaker names from Meet's captions. Captions garble words: your name "Adjourn" may
-appear as "a journ", "adjourned", "the journey", "agent", "a john"; technical terms may be misheard ("read this" =
-Redis). Infer what people meant.
+appear as "a journ", "adjourned", "the journey", "agent", "a john"; terms may be misheard ("read this" = Redis).
+Captions also split sentences into fragments: read consecutive lines of one speaker as one utterance. Lines from
+"—" are events (someone joined, a task changed). "You" lines are what you said.
 
-ACTIONS
-- "speak": say something now.
-- "raise_hand": you have something genuinely valuable but nobody invited you. The meeting sees your raised hand and
-  can invite you. Use it instead of interrupting.
-- "lower_hand": your raised point is no longer relevant, or they declined ("no thanks", moved on).
-- "silent": do nothing. This is the usual case.
+SPEAKING ("action")
+- "speak": say something now. "raise_hand": you have something valuable but were not invited (the meeting sees a
+  raised hand). "lower_hand": the raised point is no longer relevant or they declined. "silent": the usual case.
+- Speak when someone addresses you (by name, or unmistakably, like a follow-up right after you spoke), when your
+  hand is up and someone invites you, when you are asked to repeat or continue, and when a task event needs a short
+  word from you (a draft is ready for approval, a ticket was created, something failed).
+- Raise your hand when an open question hangs, nobody answers, and you have a confident answer; or someone states
+  a wrong fact that matters for a decision. At most one hand at a time.
+- Stay silent when people talk to each other, small talk, thinking out loud, someone is mid-sentence or already
+  answering, or you are unsure you were addressed. Interrupting is worse than missing a chance.
+- Like a sharp, friendly colleague: English, answer first, one to three short spoken sentences, first names, round
+  numbers, no lists, URLs, markdown or emoji. Never filler ("I'm here", "ready to assist", "great question"),
+  never talk about yourself or your reasoning, never repeat what was just said. Google Search for facts.
 
-SPEAK only when
-1. someone addresses you, by name or unmistakably (e.g. a follow-up question right after you spoke: "and what about X?"),
-   with a question or request;
-2. your hand is raised and someone invites you ("go ahead", "yes, Adjourn?", "what is it?");
-3. you are asked to repeat, clarify or continue.
-
-RAISE YOUR HAND when
-- an open question hangs in the room, nobody is answering it, and you have a confident, concrete answer;
-- someone states something factually wrong that matters for what they are deciding;
-- they are about to decide without a key fact you have (for example from your research below).
-At most one raised hand at a time. Do not raise it again for the same point.
-
-STAY SILENT when people talk to each other, small talk, thinking out loud, rhetorical questions, someone is
-mid-sentence or already answering, the question was already answered, the last line looks unfinished, or you are not
-sure you were addressed. Interrupting is worse than missing a chance. If told to stop or be quiet, stay silent.
-
-HOW YOU SPEAK
-Like a sharp, friendly colleague. English. Answer first, in one to three short spoken sentences. Use people's first
-names when natural. Round numbers. No lists, no URLs, no markdown, no emoji. If the request is unclear, ask one short
-question back. Never filler ("I'm here", "ready to assist", "great question", "sure thing"), never talk about yourself,
-your rules or your reasoning, never repeat what someone just said. When invited after raising your hand, make the point
-you raised, updated to the conversation. Use Google Search when you need a fact; keep it quick.
+WORK ("tasks", "approve", "dismiss")
+Agents do work for the meeting:
+{agents}
+- When someone asks for such work, or the room agrees on it, add a "create" op: type, a short title, and a complete,
+  self-contained brief (what, for whom with their name and email from the participants list, when, in absolute
+  dates). Then say one short sentence of what you are PREPARING ("I'll draft a Linear ticket for the onboarding copy
+  for Jany."). Never say it is done: work takes time and some needs approval.
+- When they change agreed work (another assignee, title, time), add an "update" op with the task id and the complete
+  new brief. Never create a second task for the same thing.
+- Approval: drafts marked "WAITING FOR APPROVAL (voice OK)" may be approved by voice. When such a draft is ready,
+  say what it is in one sentence and ask whether to create it. Put its id in "approve" ONLY when a participant
+  clearly says yes to that item ("yes", "go ahead", "create it", "do it"). Unclear, or a different item: ask. Drafts
+  marked "(needs a click)" are approved on the panel: say so if asked.
+- When they drop agreed work before it exists, put its id in "dismiss". Created tickets cannot be deleted by you:
+  say so.
+- State facts about work only as the task list shows them. A ticket exists only when the list says CREATED with its
+  identifier. If something failed, say so plainly.
 
 EXAMPLES
-Transcript: Kaleb: Would Redis help speed up our search API?  Sara: Hmm, maybe, I'm not sure.
--> {"action": "raise_hand", "point": "Redis would help if most searches repeat; I can explain.", "reason": "open question, I know"}
-Transcript: Kaleb: Adjourn, would a CDN help our image load times?
--> {"action": "speak", "say": "Yes, Kaleb. A CDN serves images from servers near your users, so load times usually drop a lot, and it takes load off your origin.", "reason": "addressed"}
-Transcript: (your hand is up) Sara: Okay, go ahead.
--> {"action": "speak", "say": "Redis helps if many searches repeat: cached results come back in about a millisecond. If most queries are unique, fix the database query first.", "reason": "invited"}
-Transcript: Kaleb: How was your weekend?  Sara: Good, we went hiking.
--> {"action": "silent", "reason": "small talk"}
-Transcript: Kaleb: So I think we should ship it on Thursday and
--> {"action": "silent", "reason": "unfinished"}
+Kaleb: Adjourn, would a CDN help our image load times?
+-> {{"action": "speak", "say": "Yes, Kaleb. A CDN serves images from servers near your users, so load times usually drop a lot.", "reason": "addressed"}}
+Kaleb: Would Redis help speed up our search API?  Sara: Hmm, I'm not sure.
+-> {{"action": "raise_hand", "point": "Redis helps if most searches repeat.", "reason": "open question, I know"}}
+Kaleb: Can you make a Linear ticket for the onboarding copy and give it to Jany?
+-> {{"action": "speak", "say": "Sure, I'll draft a Linear ticket for the onboarding copy for Jany.", "tasks": [{{"op": "create", "type": "linear", "title": "Onboarding copy", "brief": "Create a Linear ticket: rewrite the onboarding copy. Assign it to Jany Koulen <jany@example.com>."}}], "reason": "asked for a ticket"}}
+—: Draft ready, WAITING FOR APPROVAL (voice OK): t3 linear "Onboarding copy" -> Jany Koulen
+-> {{"action": "speak", "say": "The Linear ticket for the onboarding copy is drafted for Jany. Shall I create it?", "reason": "draft ready"}}
+Kaleb: Yes, go ahead.   (t3 is waiting for approval)
+-> {{"action": "speak", "say": "Creating it now.", "approve": ["t3"], "reason": "clear yes"}}
+Jany: Actually, give it to Sara instead.   (t3 is a draft)
+-> {{"action": "speak", "say": "Okay, I'll move it to Sara.", "tasks": [{{"op": "update", "id": "t3", "brief": "Create a Linear ticket: rewrite the onboarding copy. Assign it to Sara Lind.", "reason": "reassigned to Sara"}}], "reason": "change"}}
+Kaleb: How was your weekend?  Sara: Good, we went hiking.
+-> {{"action": "silent", "reason": "small talk"}}
 
 Reply with JSON only:
-{"action": "speak|raise_hand|lower_hand|silent", "say": "words to say (speak only)", "point": "one sentence (raise_hand only)", "reason": "a few words"}"""
+{{"action": "speak|raise_hand|lower_hand|silent", "say": "...", "point": "...", "tasks": [], "approve": [], "dismiss": [], "reason": "a few words"}}"""
 
-
-current: "Floor | None" = None  # set by main.py; listen/bot.py feeds it captions in live-voice mode
+current: "Floor | None" = None  # set by main.py; listen/bot.py feeds it in live-voice mode
 
 
 class Floor:
-    def __init__(self, store: Store) -> None:
+    def __init__(self, store: Store, orch=None) -> None:
         self.store = store
-        self.lines: deque = deque(maxlen=60)  # (ts, speaker, text, is_adjourn)
+        self.orch = orch  # the orchestrator (set by main.py): tasks, approvals, dismissals
+        self.lines: deque = deque(maxlen=MEMORY_LINES)  # (ts, speaker, text, is_adjourn)
         self.pages: set = set()  # connected voice pages (WebSockets)
         self.hand: str | None = None  # the raised point, or None
         self.speaking = False  # the voice page is playing Adjourn's words
         self.last_spoke_at = 0.0
-        self.new_since_decision = 0  # human lines since the last decision
+        self.new_since_decision = 0  # lines since the last decision
+        self.present: set[str] = set()  # people in the call (join/leave events, captions)
+        self.talking: dict[str, float] = {}  # people talking right now -> last sign of speech
+        self.has_speech_events = False  # this bot sends speech_on/off
+        self.last_caption_at = 0.0
+        self._last_final = ""
+        self._task_status: dict[str, str] = {}  # task id -> last status seen (for task events)
         self._timer: asyncio.Task | None = None
         self._deciding: asyncio.Task | None = None
         self._partial_words: dict[str, int] = {}
         self._seen_speakers: set[str] = set()
-        self.present: set[str] = set()  # people in the call (join/leave events, captions)
-        self.last_caption_at = 0.0
-        self.talking: dict[str, float] = {}  # people talking right now -> last sign of speech
-        self.has_speech_events = False  # this bot sends speech_on/off
+        self._jobs: set[asyncio.Task] = set()
 
-    # --- input: captions ---
+    def active(self) -> bool:
+        """Live-voice mode: a voice page is connected, so this mind runs the meeting."""
+        return bool(self.pages)
+
+    # --- input: who is in the call, who talks, what was said ---
 
     def is_adjourn(self, speaker: str | None, text: str = "") -> bool:
         """Adjourn's own voice coming back through Meet: by name, or by matching what it just said
@@ -130,26 +157,23 @@ class Floor:
         if speaker and speaker.strip().lower().startswith(settings.bot_name.lower()):
             return True
         if text:
-            recent = [t for _, _, t, own in list(self.lines)[-4:] if own]
+            recent = [t for _, _, t, own in list(self.lines)[-6:] if own]
             words = text.lower()
             return any(difflib.SequenceMatcher(None, words, r.lower()).ratio() > 0.6
                        or (len(words) > 20 and words in r.lower()) for r in recent)
         return False
 
     def on_presence(self, name: str | None, joined: bool) -> None:
-        """Recall join/leave: the mind knows who is in the call, and sees arrivals in the transcript."""
         if not name or self.is_adjourn(name):
             return
         if joined and name not in self.present:
             self.present.add(name)
-            self.lines.append((time.time(), "—", f"{name} joined the call", False))
+            self._event(f"{name} joined the call", decide=False)
         elif not joined and name in self.present:
             self.present.discard(name)
-            self.lines.append((time.time(), "—", f"{name} left the call", False))
+            self._event(f"{name} left the call", decide=False)
 
     def someone_talking(self) -> bool:
-        """True while a person holds the floor. Entries without a fresh sign of speech expire, so
-        a lost speech_off can never freeze Adjourn."""
         now = time.time()
         for who, seen in list(self.talking.items()):
             if now - seen > TALKING_STALE_S:
@@ -157,9 +181,8 @@ class Floor:
         return bool(self.talking)
 
     def on_speech(self, speaker: str | None, talking: bool) -> None:
-        """Recall's speech_on / speech_off: the fastest signal of who holds the floor.
-        Events without a name are the bot itself (Recall does not name it)."""
-        if not speaker or speaker == "Someone" or self.is_adjourn(speaker):
+        """speech_on / speech_off. Events without a name are the bot itself (Recall does not name it)."""
+        if not speaker or self.is_adjourn(speaker):
             return
         self.has_speech_events = True
         if talking:
@@ -174,11 +197,8 @@ class Floor:
                 self._schedule(AFTER_SPEECH_S)
 
     def on_caption(self, speaker: str | None, text: str, final: bool) -> None:
-        """Every Meet caption, partial or final. Adjourn's own captions are recorded, never answered."""
         text = " ".join(text.split())
-        if not text:
-            return
-        if self.is_adjourn(speaker, text):
+        if not text or self.is_adjourn(speaker, text):
             return  # its own words are already in the history (apply())
         who = speaker or "Someone"
         self.last_caption_at = time.time()
@@ -191,15 +211,40 @@ class Floor:
         if not self.has_speech_events and self.speaking and words >= BARGE_IN_WORDS and words > self._partial_words.get(who, 0):
             self._send({"type": "stop"})  # fallback barge-in from captions
             self.speaking = False
-            log.info("barge-in by %s (captions)", who)
         self._partial_words[who] = 0 if final else words
         if who in self.talking:
-            self.talking[who] = time.time()  # a caption is a fresh sign they are talking
+            self.talking[who] = time.time()
         if final:
-            self.lines.append((time.time(), who, text, False))
+            self.lines.append((time.time(), who, text[:400], False))
             self.new_since_decision += 1
-        # every caption word restarts the quiet timer; the decision comes when captions go quiet
-        self._schedule(PAUSE_NAMED_S if final and NAME.search(text) else QUIET_S)
+            self._last_final = text
+        # the decision comes when captions go quiet; wait longer after a sentence fragment
+        if final and NAME.search(text):
+            self._schedule(PAUSE_NAMED_S)
+        else:
+            ended = self._last_final.rstrip().endswith((".", "?", "!"))
+            self._schedule(QUIET_S if ended else QUIET_OPEN_S)
+
+    def on_task(self, task: Task) -> None:
+        """Store task listener: tell the mind (and through it the room) about task milestones."""
+        before = self._task_status.get(task.id)
+        self._task_status[task.id] = task.status
+        if before == task.status or not self.active():
+            return
+        if task.status == "needs_approval":
+            how = "voice OK" if task.type in settings.voice_approval else "needs a click"
+            self._event(f"Draft ready, WAITING FOR APPROVAL ({how}): {self._describe_short(task)}")
+        elif task.status == "done" and task.artifact and task.artifact.delivered:
+            self._event(f"Done: {self._describe_short(task)}")
+        elif task.status == "failed":
+            last = task.trace[-1].text if task.trace else "unknown error"
+            self._event(f"Failed: {task.type} {task.id} “{task.title}”: {last[:160]}")
+
+    def _event(self, text: str, decide: bool = True) -> None:
+        self.lines.append((time.time(), EVENT, text, False))
+        if decide:
+            self.new_since_decision += 1
+            self._schedule(AFTER_SPEECH_S)
 
     def _schedule(self, delay: float) -> None:
         if self._timer and not self._timer.done():
@@ -216,32 +261,80 @@ class Floor:
             self._deciding.cancel()  # newer speech supersedes an unfinished decision
         self._deciding = asyncio.create_task(self.decide())
 
-    # --- the decision ---
+    # --- what the mind sees ---
+
+    def _people(self) -> list:
+        meeting = self.store.meeting
+        return [p for p in ([meeting.me, *meeting.others] if meeting else []) if p.name]
+
+    def _name_for(self, email: str) -> str:
+        person = next((p for p in self._people() if p.email and p.email.lower() == email.lower()), None)
+        return person.name if person else email
+
+    def _describe_short(self, task: Task) -> str:
+        art = task.artifact
+        out = f"{task.id} {task.type} “{art.title if art and art.title else task.title}”"
+        if art and art.to:
+            out += " -> " + ", ".join(self._name_for(e) for e in art.to)
+        if art and art.external_id:
+            out += f" (CREATED as {art.external_id})"
+        return out
+
+    def _describe(self, task: Task) -> str:
+        art = task.artifact
+        status = {
+            "needs_approval": ("WAITING FOR APPROVAL (voice OK)" if task.type in settings.voice_approval
+                               else "WAITING FOR APPROVAL (needs a click)"),
+            "done": "DONE", "failed": "FAILED",
+        }.get(task.status, "being prepared")
+        line = f"- {task.id} {task.type} “{task.title}”: {status}. Brief: {task.brief[:220]}"
+        if art:
+            if art.kind == "issue":
+                line += f" | Draft: “{art.title}”"
+                line += " assigned to " + (", ".join(self._name_for(e) for e in art.to) if art.to else "nobody")
+                line += f" | CREATED as {art.external_id}" if art.external_id else " | not created yet"
+                if art.note:
+                    line += f" | Note: {art.note[:120]}"
+            elif art.kind == "event" and art.start:
+                start = datetime.fromisoformat(art.start)
+                line += f" | {start:%a %d %b %H:%M}" + (" | invite sent" if art.delivered else " | hold only")
+            elif art.content:
+                line += f" | {art.content[:300]}"
+        if task.review:
+            line += f" | Review: {task.review[:160]}"
+        return line
 
     def prompt(self) -> str:
         now = time.time()
         start = self.lines[0][0] if self.lines else now
-        names = sorted(self.present | {s for _, s, _, own in self.lines if not own and s != "—"})
+        people = self._people()
+        names = {p.name for p in people} | self.present
+        roster = "\n".join(f"- {p.name}" + (f" <{p.email}>" if p.email else "") for p in people) or "- (unknown yet)"
+        extra = sorted(n for n in self.present if n not in {p.name for p in people})
+        if extra:
+            roster += "\n" + "\n".join(f"- {n}" for n in extra)
         transcript = []
         fresh_from = len(self.lines) - self.new_since_decision
         for i, (ts, speaker, text, own) in enumerate(self.lines):
             mark = ">> " if i >= fresh_from and not own else "   "
-            who = f"{speaker} (you)" if own else speaker
             m, s = divmod(int(ts - start), 60)
-            transcript.append(f"{mark}[{m:02d}:{s:02d}] {who}: {text}")
+            transcript.append(f"{mark}[{m:02d}:{s:02d}] {'You' if own else speaker}: {text}")
         tasks = [t for t in self.store.tasks.values() if t.status != "dismissed"]
-        research = "\n".join(
-            f"- {t.type} '{t.title}' ({t.status})" + (f": {t.artifact.content}" if t.artifact and t.artifact.content else "")
-            for t in tasks
-        ) or "(none yet)"
         spoke = (f"You last spoke {int(now - self.last_spoke_at)} s ago." if self.last_spoke_at else "You have not spoken yet.")
         return (
-            f"In the call right now (besides you): {', '.join(names) or 'nobody identified yet'}.\n"
-            f"Your research and tasks in this meeting:\n{research}\n"
+            f"Now: {datetime.now().astimezone():%A %d %B %Y %H:%M %Z}.\n"
+            f"People in the call ({len(names)}):\n{roster}\n\n"
+            f"Work in this meeting:\n" + ("\n".join(self._describe(t) for t in tasks) or "(none yet)") + "\n\n"
             f"Your hand: {'RAISED, point: ' + self.hand if self.hand else 'down'}. {spoke}\n\n"
-            f"Transcript (oldest first; '>>' marks lines since your last decision):\n" + "\n".join(transcript)
+            f"Transcript (oldest first; '>>' marks what is new since your last decision):\n" + "\n".join(transcript)
             + "\n\nDecide now."
         )
+
+    def system(self) -> str:
+        docs = "\n".join(f"- {spec.type}: {spec.intent_doc}" for spec in agents.enabled() if spec.type not in ("answer", "research"))
+        return SYSTEM.format(agents=docs or "- (none enabled)")
+
+    # --- the decision ---
 
     async def decide(self) -> dict:
         prompt = self.prompt()  # before resetting the counter: it marks the fresh lines
@@ -249,19 +342,19 @@ class Floor:
         started = time.time()
         last_line = self.lines[-1][2] if self.lines else ""
         result = await llm.generate(
-            "floor", prompt, system=SYSTEM, search=True, model=FLOOR_MODEL, thinking=FLOOR_THINKING,
-            mock=lambda: llm.LLMResult(text=json.dumps(_mock_decision(last_line, self.hand))), mock_delay=0.3,
+            "floor", prompt, system=self.system(), search=True, model=FLOOR_MODEL, thinking=FLOOR_THINKING,
+            mock=lambda: llm.LLMResult(text=json.dumps(_mock_decision(last_line, self.hand, self.store))),
+            mock_delay=0.3,
         )
         decision = _parse(result.text)
-        log.info("floor %.1fs: %s", time.time() - started, decision)
-        if self.last_caption_at > started and decision["action"] == "speak" and not NAME.search(last_line):
+        log.info("floor %.1fs: %s", time.time() - started, {k: v for k, v in decision.items() if v})
+        if self.last_caption_at > started and not NAME.search(last_line):
             return decision  # someone kept talking while we decided; their caption's timer decides again
-        if self.new_since_decision and decision["action"] != "speak":
-            return decision  # people kept talking; the next pause decides again
         self.apply(decision)
         return decision
 
     def apply(self, decision: dict) -> None:
+        self._apply_work(decision)
         action = decision["action"]
         if action == "speak" and decision.get("say"):
             self.hand = None
@@ -278,14 +371,50 @@ class Floor:
             self.hand = None
             self._send({"type": "hand", "up": False})
 
-    # --- output: the voice pages ---
+    def _apply_work(self, decision: dict) -> None:
+        """Task ops, voice approvals and dismissals, through the orchestrator's own doors."""
+        if self.orch is None:
+            return
+        ops = []
+        for raw in decision.get("tasks") or []:
+            try:
+                ops.append(Op.model_validate(raw))
+            except Exception:  # noqa: BLE001  (a malformed op is skipped, not fatal)
+                log.warning("floor: bad task op %s", raw)
+        if ops:
+            self.store.ensure_meeting()
+            log.info("floor ops: %s", [op.model_dump(exclude_defaults=True) for op in ops])
+            self.orch.apply(ops)
+        for task_id in decision.get("approve") or []:
+            task = self.store.tasks.get(task_id)
+            if task is None or task.status != "needs_approval" or task.type not in settings.voice_approval:
+                log.info("floor: approval of %s refused (%s)", task_id, task.status if task else "unknown task")
+                continue
+            self.store.trace(task_id, "info", "Approved by voice in the meeting")
+            self._run(self.orch.approve(task_id), f"voice approval of {task_id}")
+        for task_id in decision.get("dismiss") or []:
+            task = self.store.tasks.get(task_id)
+            if task and task.status not in ("done", "dismissed"):
+                self.orch.dismiss(task_id)
+
+    def _run(self, coro, label: str) -> None:
+        async def guarded():
+            try:
+                await coro
+            except Exception as exc:  # noqa: BLE001
+                log.warning("%s failed: %s", label, exc)
+        job = asyncio.create_task(guarded())
+        self._jobs.add(job)
+        job.add_done_callback(self._jobs.discard)
+
+    # --- output: the voice page ---
 
     def spoken(self) -> None:
         """The page finished saying Adjourn's words."""
         self.speaking = False
         self.last_spoke_at = time.time()
         if self.new_since_decision:
-            self._schedule(AFTER_SPEECH_S)  # someone spoke while Adjourn was talking
+            self._schedule(AFTER_SPEECH_S)  # someone spoke (or a task changed) while Adjourn was talking
 
     def _send(self, message: dict) -> None:
         for page in list(self.pages):
@@ -296,6 +425,7 @@ class Floor:
         self.hand, self.speaking, self.last_spoke_at, self.new_since_decision = None, False, 0.0, 0
         self.talking.clear()
         self.present.clear()
+        self._task_status.clear()
 
 
 async def _safe_send(ws, message: dict) -> None:
@@ -313,12 +443,27 @@ def _parse(text: str) -> dict:
     except json.JSONDecodeError:
         data = {}
     action = data.get("action") if data.get("action") in ("speak", "raise_hand", "lower_hand", "silent") else "silent"
-    return {"action": action, "say": (data.get("say") or "").strip(), "point": (data.get("point") or "").strip(),
-            "reason": data.get("reason", "")}
+    as_list = lambda v: [x for x in v if x] if isinstance(v, list) else []  # noqa: E731
+    return {
+        "action": action, "say": (data.get("say") or "").strip(), "point": (data.get("point") or "").strip(),
+        "tasks": [t for t in as_list(data.get("tasks")) if isinstance(t, dict)],
+        "approve": [str(t) for t in as_list(data.get("approve"))],
+        "dismiss": [str(t) for t in as_list(data.get("dismiss"))],
+        "reason": data.get("reason", ""),
+    }
 
 
-def _mock_decision(last_line: str, hand: str | None) -> dict:
-    """LLM_MODE=mock: speak when named, raise a hand on a question to the room, else silent."""
+def _mock_decision(last_line: str, hand: str | None, store: Store) -> dict:
+    """LLM_MODE=mock: speak when named, raise a hand on a question, draft/approve Linear tickets."""
+    waiting = [t for t in store.tasks.values() if t.status == "needs_approval" and t.type in settings.voice_approval]
+    if waiting and re.search(r"\b(yes|go ahead|create it|do it)\b", last_line, re.I):
+        return {"action": "speak", "say": "Creating it now.", "approve": [waiting[-1].id], "reason": "clear yes"}
+    if re.search(r"draft ready", last_line, re.I):
+        return {"action": "speak", "say": "The draft is ready. Shall I create it?", "reason": "draft ready"}
+    if re.search(r"\blinear\b.*\bticket\b", last_line, re.I):
+        return {"action": "speak", "say": "I'll draft that Linear ticket.", "reason": "asked",
+                "tasks": [{"op": "create", "type": "linear", "title": "Mock ticket",
+                           "brief": f"Create a Linear ticket: {last_line}"}]}
     if hand and re.search(r"\bgo ahead\b|\byes\b", last_line, re.I):
         return {"action": "speak", "say": hand, "reason": "invited"}
     if NAME.search(last_line):

@@ -31,6 +31,11 @@ is the acceptance test for everything here.
                                                                v
               click: speak (the bot in the call, or audio/speak.ts) · create issue (integrations/github.py) · invite (integrations/calendar.py)
 
+    Live-voice mode (bot with live_voice): listen/floor.py is the single meeting brain. At every pause
+    it decides what Adjourn says AND which tasks to create, update, approve by voice or drop, seeing
+    speaker names and each task's real state; Gemini Live (voice_page/) only says its words.
+    The transcript-only intent pass stands down. scripts/eval_floor.py checks its decisions.
+
     Outside agents (Google Antigravity, any MCP client) see and steer the same task graph
     through the MCP server at /mcp (api/mcp.py).
 

@@ -5,14 +5,43 @@ Prints each situation, the decision, what it would say, and the decision time.
 """
 
 import asyncio
+import json
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.core.config import settings  # noqa: E402
+from app.core.contract import Artifact, MeetingContext, Person, Task  # noqa: E402
 from app.core.store import store  # noqa: E402
-from app.listen.floor import Floor  # noqa: E402
+from app.listen.floor import EVENT, Floor  # noqa: E402
+
+PEOPLE = MeetingContext(me=Person(name="Kaleb Girmay", email="kaleb@example.com"),
+                        others=[Person(name="Jany Koulen", email="jany@example.com"), Person(name="Sara Lind", email="")])
+DRAFT = Task(id="t3", type="linear", title="Onboarding copy", brief="Create a Linear ticket: rewrite the onboarding copy. Assign it to Jany Koulen <jany@example.com>.",
+             status="needs_approval", artifact=Artifact(kind="issue", title="Rewrite the onboarding copy", body="...", to=["jany@example.com"]))
+
+# work cases: (name, check(decision) -> bool, [(speaker, text)], tasks)
+WORK = [
+    ("ticket request", lambda d: any(t.get("op") == "create" and t.get("type") == "linear" and "jany" in t.get("brief", "").lower() for t in d["tasks"]) and "created" not in d["say"].lower(),
+     [("Kaleb Girmay", "Adjourn, can you make a Linear ticket for the onboarding copy and give it to Jany?")], []),
+    ("draft ready event", lambda d: d["action"] == "speak" and "?" in d["say"] and not d["approve"],
+     [(EVENT, "Draft ready, WAITING FOR APPROVAL (voice OK): t3 linear \u201cRewrite the onboarding copy\u201d -> Jany Koulen")], [DRAFT]),
+    ("yes approves", lambda d: d["approve"] == ["t3"],
+     [("You", "The Linear ticket for the onboarding copy is drafted for Jany. Shall I create it?"), ("Kaleb Girmay", "Yes, go ahead.")], [DRAFT]),
+    ("reassign draft", lambda d: any(t.get("op") == "update" and t.get("id") == "t3" and "sara" in t.get("brief", "").lower() for t in d["tasks"]) and not d["approve"],
+     [("Jany Koulen", "Actually Adjourn, give that ticket to Sara instead.")], [DRAFT]),
+    ("no false claims", lambda d: d["action"] == "speak" and not d["approve"] and not any(w in d["say"].lower() for w in ("yes, it", "it's created", "it is created", "has been created")),
+     [("Kaleb Girmay", "Adjourn, is the onboarding ticket created in Linear yet?")], [DRAFT]),
+    ("drop draft", lambda d: d["dismiss"] == ["t3"] and not d["approve"],
+     [("Kaleb Girmay", "Adjourn, scrap that onboarding ticket, we don't need it.")], [DRAFT]),
+    ("memory", lambda d: d["action"] == "speak" and "800" in d["say"].replace(",", "").replace(" ms", "") + d["say"],
+     [("Kaleb Girmay", "Our search p95 is around 800 milliseconds this week.")]
+     + [("Jany Koulen" if i % 2 else "Kaleb Girmay", f"Some unrelated discussion about the roadmap, point {i}.") for i in range(40)]
+     + [("Kaleb Girmay", "Adjourn, what did I say our search p95 was earlier?")], []),
+]
+
 
 # (name, expected action(s), [(speaker, text)], hand before)
 CASES = [
@@ -61,7 +90,29 @@ async def main() -> None:
         print(f"{'PASS' if ok else 'FAIL'} {time.time() - start:4.1f}s  {name:28} -> {decision['action']:10} {words[:110]}")
         if not ok:
             print(f"       reason: {decision.get('reason')}")
-    print(f"\n{passed}/{len(CASES)} as expected")
+    print(f"\n{passed}/{len(CASES)} turn-taking cases as expected\n")
+
+    settings.agents = ["linear", "issue", "schedule"]
+    wpassed = 0
+    for name, check, lines, tasks in WORK:
+        store.reset()
+        store.meeting = PEOPLE.model_copy(deep=True)
+        store.state = "live"
+        for t in tasks:
+            store.tasks[t.id] = t.model_copy(deep=True)
+        floor = Floor(store)
+        for speaker, text in lines:
+            floor.lines.append((time.time(), "Adjourn" if speaker == "You" else speaker, text, speaker == "You"))
+        floor.new_since_decision = len(lines)
+        start = time.time()
+        decision = await floor.decide()
+        ok = bool(check(decision))
+        wpassed += ok
+        extra = {k: decision[k] for k in ("tasks", "approve", "dismiss") if decision[k]}
+        print(f"{'PASS' if ok else 'FAIL'} {time.time() - start:4.1f}s  {name:20} -> {decision['action']:6} {decision['say'][:80]!r} {json.dumps(extra)[:160]}")
+        if not ok:
+            print(f"       reason: {decision.get('reason')}")
+    print(f"\n{wpassed}/{len(WORK)} work cases as expected")
 
 
 asyncio.run(main())

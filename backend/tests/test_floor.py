@@ -172,3 +172,50 @@ def test_people_come_from_the_call_not_from_config(orch):
         assert "Alex" not in str(meeting) and "Bea" not in str(meeting)  # the .env fallbacks
 
     run(body())
+
+
+def test_voice_approval_end_to_end(orch, monkeypatch):
+    """Ask for a Linear ticket by voice, hear the draft is ready, say yes: it is created."""
+    from app.core.config import settings
+    from app.integrations import linear
+
+    monkeypatch.setattr(floor_module, "QUIET_S", 0.05)
+    monkeypatch.setattr(floor_module, "QUIET_OPEN_S", 0.05)
+    monkeypatch.setattr(floor_module, "AFTER_SPEECH_S", 0.05)
+    settings.agents = ["linear", "schedule"]
+    linear.fake.reset()
+
+    async def body():
+        floor, page = make_floor()
+        floor.orch = orch
+        store.task_listeners.append(floor.on_task)
+        floor.on_caption("Kaleb", "Can you make a Linear ticket for the onboarding copy?", final=True)
+        await until(lambda: any(t.type == "linear" for t in store.tasks.values()))
+        ticket = next(t for t in store.tasks.values() if t.type == "linear")
+        await until(lambda: ticket.status == "needs_approval", timeout=10)
+        floor.spoken()  # the voice finished "I'll draft..."
+        await until(lambda: any("Shall I create it" in m.get("text", "") for m in page.sent))
+        assert linear.fake.tickets == {}  # nothing in Linear before the yes
+        floor.spoken()
+        floor.on_caption("Kaleb", "Yes, go ahead.", final=True)
+        await until(lambda: ticket.status == "done", timeout=10)
+        assert len(linear.fake.tickets) == 1 and ticket.artifact.external_id
+        assert any(e.text == "Approved by voice in the meeting" for e in ticket.trace)
+        assert any(text.startswith("Done:") for _, who, text, _ in floor.lines if who == "—")
+        store.task_listeners.clear()
+
+    run(body())
+
+
+def test_no_voice_approval_for_click_only_types(orch):
+    from app.core.contract import Task
+
+    async def body():
+        floor, _ = make_floor()
+        floor.orch = orch
+        store.put_task(Task(id="t9", type="schedule", title="x", brief="x", status="needs_approval"))
+        floor.apply({"action": "silent", "approve": ["t9"]})
+        await asyncio.sleep(0.05)
+        assert store.tasks["t9"].status == "needs_approval"  # schedule needs the click
+
+    run(body())

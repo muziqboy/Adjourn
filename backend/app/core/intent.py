@@ -68,6 +68,8 @@ class IntentSession:
 
     def on_line(self, text: str) -> None:
         """Store listener: called with every finalised line."""
+        if self.store.floor_owns_tasks():
+            return  # live voice: the floor (listen/floor.py) runs the meeting, with speaker names
         self.pending.append(text)
         if self._timer and not self._timer.done():
             self._timer.cancel()

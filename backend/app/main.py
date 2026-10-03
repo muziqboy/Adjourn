@@ -33,8 +33,10 @@ intent = IntentSession(store, orch)
 store.line_listeners.append(intent.on_line)  # every finalised line feeds the meeting agent
 store.line_listeners.append(voice_commands.make_listener(store, orch))  # "Go ahead, Adjourn"
 store.describe_agents = agents.describe  # card labels for the panel
-floor = floor_module.Floor(store)  # Adjourn's turn-taking mind in live-voice mode
+floor = floor_module.Floor(store, orch)  # Adjourn's mind in live-voice mode
 floor_module.current = floor
+store.task_listeners.append(floor.on_task)  # "draft ready", "created MEE-7" reach the mind
+store.floor_owns_tasks = floor.active
 
 mcp = build_mcp(store, orch, intent)
 mcp_app = mcp.streamable_http_app(streamable_http_path="/mcp")  # creates mcp.session_manager

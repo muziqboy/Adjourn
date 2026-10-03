@@ -31,6 +31,11 @@ class Store:
         self.subscribers: set[asyncio.Queue] = set()
         # called with every finalised transcript line (the intent pass subscribes here)
         self.line_listeners: list[Callable[[str], None]] = []
+        # called with every task change (the live-voice mind hears "draft ready", "created")
+        self.task_listeners: list[Callable[[Task], None]] = []
+        # filled in by main.py: True while the live-voice mind runs the meeting (it then creates
+        # the tasks itself, with speaker names, and the transcript-only intent pass stands down)
+        self.floor_owns_tasks: Callable[[], bool] = lambda: False
         # filled in by main.py: describes the registered agents and integration modes for the panel
         self.describe_agents: Callable[[], list[dict]] = lambda: []
         # calendar auto-join status, owned by listen/autojoin.py. Not meeting state, so a reset
@@ -206,6 +211,8 @@ class Store:
         """Publish a task's new state. Only the orchestrator calls this."""
         self.tasks[task.id] = task
         self.emit("task.created" if created else "task.updated", task.model_dump())
+        for listener in self.task_listeners:
+            listener(task)
 
     def trace(self, task_id: str, kind: str, text: str) -> None:
         task = self.tasks.get(task_id)

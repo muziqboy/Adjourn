@@ -51,6 +51,9 @@ class Settings:
         # minimal thinking decides in 0.5-1.5 s (scripts/eval_floor.py: 10/10 situations)
         self.floor_model = os.getenv("FLOOR_MODEL", "gemini-3.5-flash-lite")
         self.floor_thinking = os.getenv("FLOOR_THINKING", "minimal")
+        # Task types people in the call may approve by voice ("yes, create it"). Others need the
+        # panel click. Linear by team decision (3 Oct); add issue, schedule... to widen it.
+        self.voice_approval = _list("VOICE_APPROVAL", "linear")
         self.condense_base_url = os.getenv("CONDENSE_BASE_URL", "")
         self.condense_api_key = os.getenv("CONDENSE_API_KEY", "")
 

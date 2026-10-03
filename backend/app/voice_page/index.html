@@ -146,7 +146,8 @@ const levels = new Uint8Array(analyser.frequencyBinCount);
 // ---- the take gate: the first moments of each line wait for its transcript --------------
 // If the voice starts talking ABOUT the line ("The user wants me to read...") instead of saying
 // it, the take is dropped unheard and the line is sent again once.
-const META = /^\W*(the user|user wants|i (must|will|should|need to|am going to)|okay,? (so|i)|let me|here is|reading|word for word|as adjourn)/i;
+// Only unmistakable self-talk: "I will assign the ticket" is a normal line and must be spoken.
+const META = /^\W*(the user (wants|asked|is asking)|user wants|i (must|need to|should) (read|say|speak|adopt)|(i('ll| will) )?read (this|the following)|word for word|as adjourn,? i|here is the (text|line))/i;
 const GATE_MS = 600;
 let gate = null;  // {chunks, timer, text, retried}
 function openGate() {
