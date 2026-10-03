@@ -1,0 +1,20 @@
+[project]
+name = "adjourn"
+version = "0.1.0"
+description = "Adjourn: does the follow-ups while you are still on the call"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic>=2",
+    "google-genai",
+    "google-api-python-client",
+    "google-auth-oauthlib",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
