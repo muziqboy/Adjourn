@@ -151,6 +151,7 @@ export function useMeeting() {
     replay: useCallback(() => post("/api/replay?name=demo_call&speed=1"), []),
     approve: useCallback((id: string): Promise<Task> => post(`/api/tasks/${id}/approve`), []),
     dismiss: useCallback((id: string) => post(`/api/tasks/${id}/dismiss`), []),
+    steer: useCallback((id: string, instruction: string): Promise<Task> => post(`/api/tasks/${id}/steer`, { instruction }), []),
     reset: useCallback(() => post("/api/reset"), []),
     sendBot: useCallback((meeting_url: string) => post("/api/bot/join", { meeting_url }), []),
     botLeave: useCallback(() => post("/api/bot/leave"), []),

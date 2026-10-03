@@ -370,3 +370,34 @@ def test_company_directory_and_everyones_calendar():
     free = company.common_free(["Jany Koulen", "Chinmay Pant"], tuesday)
     assert not any(s.hour == 13 for s, _ in free) and any(s.hour == 15 for s, _ in free)
     assert "Meetagent AB" in company.briefing()
+
+
+def test_invitees_survive_a_restart_through_the_directory(orch):
+    """The call's participant list is empty after a backend restart; the people the brief names
+    are still found in the company directory."""
+    from app.agents import schedule
+    from app.core.contract import MeetingContext, Person, Task
+
+    class Ctx:
+        meeting = MeetingContext(me=Person(name="Kaleb Girmay", email="kaleb@x.se"), others=[])
+
+    task = Task(id="t1", type="schedule", title="x", brief="Book a meeting with Kaleb Girmay and Jany Koulen on Thursday.")
+    assert schedule.invitees(task, Ctx) == (["jany.koulen@meetagent.example"], [])
+
+
+def test_no_hollow_sending_when_nobody_can_be_invited(orch):
+    from app.core.contract import Artifact, MeetingContext, Person, Task
+
+    async def body():
+        floor, page = make_floor()
+        floor.orch = orch
+        store.meeting = MeetingContext(me=Person(name="Kaleb Girmay", email="kaleb@x.se"),
+                                       others=[Person(name="Star Developer", email="")])
+        store.put_task(Task(id="t1", type="schedule", title="x", brief="Meet Star Developer on Thursday at two.",
+                            status="needs_approval", artifact=Artifact(kind="event", external_id="e1")))
+        decision = {"action": "speak", "say": "Sending it now.", "approve": ["t1"]}
+        floor.apply(decision)
+        assert decision["say"].startswith("I can't send it yet") and "Star Developer" in decision["say"]
+        assert store.tasks["t1"].status == "needs_approval"
+
+    run(body())
