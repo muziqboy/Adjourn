@@ -60,10 +60,14 @@ class Settings:
         self.github_repo = os.getenv("GITHUB_REPO", "")  # owner/name
         self.github_token = os.getenv("GITHUB_TOKEN", "")
         # Linear (agents/linear.py): a Gemini agent works in Linear through Linear's MCP server.
-        # LINEAR_MODE: mock | live (LLM_MODE=mock forces mock, so tests never reach the network).
-        self.linear_mode = os.getenv("LINEAR_MODE", "mock")
+        # The key is the switch: with LINEAR_API_KEY set, the linear agent is enabled and live;
+        # without it nothing changes. LINEAR_MODE=mock forces the fake; LLM_MODE=mock does too,
+        # so tests never reach the network.
         self.linear_api_key = os.getenv("LINEAR_API_KEY", "")  # sent only to Linear's MCP server
+        self.linear_mode = os.getenv("LINEAR_MODE") or ("live" if self.linear_api_key else "mock")
         self.linear_team = os.getenv("LINEAR_TEAM", "")  # team key, e.g. "ADJ"; empty = the agent finds it
+        if self.linear_api_key and "linear" not in self.agents:
+            self.agents.append("linear")
         self.credentials_file = BACKEND / "credentials.json"  # Google OAuth client
         self.token_file = BACKEND / "token.json"  # Google OAuth token, written by scripts/google_auth.py
 
