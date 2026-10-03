@@ -105,6 +105,11 @@ async def lower_hand(store: Store) -> None:
 def handle_webhook(store: Store, payload: dict) -> None:
     from . import floor
 
+    presence = recall.parse_presence_event(payload)
+    if presence is not None:
+        if floor.current is not None:
+            floor.current.on_presence(*presence)
+        return
     speech = recall.parse_speech_event(payload)
     if speech is not None:
         if floor.current is not None and live_voice(store):

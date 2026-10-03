@@ -107,6 +107,19 @@ def build_router(store: Store, floor: Floor) -> APIRouter:
         finally:
             floor.pages.discard(ws)
 
+    @router.get("/api/voice/state")
+    async def state():
+        """Local only: what the floor is waiting on (for debugging turn-taking)."""
+        now = __import__("time").time()
+        return {
+            "pages": len(floor.pages), "speaking": floor.speaking, "hand": floor.hand,
+            "talking": {who: round(now - seen, 1) for who, seen in floor.talking.items()},
+            "new_since_decision": floor.new_since_decision, "has_speech_events": floor.has_speech_events,
+            "deciding": bool(floor._deciding and not floor._deciding.done()),
+            "timer": bool(floor._timer and not floor._timer.done()),
+            "last_lines": [f"{s}{' (you)' if own else ''}: {t}" for _, s, t, own in list(floor.lines)[-6:]],
+        }
+
     @router.post("/api/voice/say")
     async def say(body: dict):
         """Local only (the tunnel refuses /api/...): make Adjourn say a line, for testing the voice."""

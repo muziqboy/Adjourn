@@ -29,7 +29,7 @@ def kinds(page):
 
 
 def test_speaks_when_addressed_after_the_pause(orch, monkeypatch):
-    monkeypatch.setattr(floor_module, "PAUSE_S", 0.05)
+    monkeypatch.setattr(floor_module, "QUIET_S", 0.05)
     monkeypatch.setattr(floor_module, "PAUSE_NAMED_S", 0.05)
 
     async def body():
@@ -45,7 +45,7 @@ def test_speaks_when_addressed_after_the_pause(orch, monkeypatch):
 
 
 def test_silent_for_chatter_and_hand_for_open_questions(orch, monkeypatch):
-    monkeypatch.setattr(floor_module, "PAUSE_S", 0.05)
+    monkeypatch.setattr(floor_module, "QUIET_S", 0.05)
 
     async def body():
         floor, page = make_floor()
@@ -128,5 +128,24 @@ def test_a_lost_speech_off_never_freezes_it(orch, monkeypatch):
         floor.on_speech("Star Developer", True)  # ...and its speech_off never comes
         floor.on_caption("Kaleb", "Adjourn, who am I?", final=True)
         await until(lambda: "say" in kinds(page), timeout=5)
+
+    run(body())
+
+
+def test_a_noisy_microphone_does_not_block_and_presence_is_known(orch, monkeypatch):
+    monkeypatch.setattr(floor_module, "QUIET_S", 0.05)
+    monkeypatch.setattr(floor_module, "PAUSE_NAMED_S", 0.05)
+
+    async def body():
+        floor, page = make_floor()
+        floor.on_presence("Kaleb Girmay", True)
+        floor.on_presence("Star Developer 6482", True)
+        floor.on_presence(None, True)  # the bot itself
+        floor.on_speech("Kaleb Girmay", True)  # his mic stays "on" (room noise), no speech_off
+        floor.on_caption("Star Developer 6482", "Adjourn, who is in this call?", final=True)
+        await until(lambda: "say" in kinds(page))
+        prompt = floor.prompt()
+        assert "Kaleb Girmay" in prompt and "Star Developer 6482" in prompt
+        assert "Star Developer 6482 joined the call" in prompt
 
     run(body())

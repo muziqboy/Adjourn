@@ -95,8 +95,10 @@ def bot_config(meeting_url: str | None = None, live_voice_url: str | None = None
                 "type": "webhook",
                 "url": webhook_url(),
                 # speech_on/off: who starts and stops talking, within moments (turn-taking, barge-in)
+                # join/leave: who is in the call
                 "events": ["transcript.data", "transcript.partial_data",
-                           "participant_events.speech_on", "participant_events.speech_off"],
+                           "participant_events.speech_on", "participant_events.speech_off",
+                           "participant_events.join", "participant_events.leave"],
             }],
         },
         # Recall only allows output_audio later if the bot was created with an automatic
@@ -165,6 +167,16 @@ def parse_speech_event(payload: dict) -> tuple[str | None, bool] | None:
     data = payload.get("data") or {}
     participant = (data.get("data") or {}).get("participant") or data.get("participant") or {}
     return participant.get("name"), event.endswith("speech_on")  # no name: the bot itself
+
+
+def parse_presence_event(payload: dict) -> tuple[str | None, bool] | None:
+    """(participant name, joined?) from a participant_events.join / leave webhook."""
+    event = payload.get("event", "")
+    if event not in ("participant_events.join", "participant_events.leave"):
+        return None
+    data = payload.get("data") or {}
+    participant = (data.get("data") or {}).get("participant") or data.get("participant") or {}
+    return participant.get("name"), event.endswith(".join")
 
 
 def bot_id_of(payload: dict) -> str | None:
