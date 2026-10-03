@@ -24,16 +24,21 @@ moves, and the downstream tasks follow.
 | **Gmail (TBD)** | `email` | Drafts follow-up and recap emails to meeting participants based on discussion and action items | `mock`, `links`, `live` |
 | **Google Search** | `answer`, `research` | Grounded real-time web search via Gemini to fact-check and answer technical questions live | `mock`, `live` |
 | **Recall.ai** | `listen/bot` | Meeting bot that joins Google Meet, transcribes speech with speaker attribution, and speaks answers into the call | `mock`, `live` |
+| **Condense** | `llm/condense` | Dynamic context compression for the meeting agent: cuts token costs and keeps latency low without naive truncation | `mock`, `live` |
 | **Model Context Protocol (MCP)** | `api/mcp` | Exposes Adjourn's live task graph at `/mcp` so external agents (Google Antigravity, Claude) can inspect, steer, and approve tasks; integrates with remote MCP tools (e.g. Linear) | Live `/mcp` server |
 
 ## How it works
 
-    Meet ─> live transcript (Gemini Live) ─> meeting agent (one long Gemini session) ─> task graph
+    Meet ─> live transcript (Gemini Live) ─> Condense (compression) ─> meeting agent ─> task graph
           ─> agents: answer (Gemini + Search) · issue (GitHub) · linear (Linear MCP) · schedule (Calendar) · email (Gmail)
           ─> independent verification ─> one-click / voice approval ─> panel & external tools
 
 - **Task graph.** The issue waits for the answer it builds on. When an upstream task changes
   (the meeting moves), everything that used it re-runs and updates its object in place.
+- **Context compression (Condense).** Meeting transcripts grow continuously over long calls.
+  Condense dynamically compacts conversation history before model calls, drastically cutting token
+  costs and keeping latency fast—preserving critical context, participant names, and earlier decisions
+  without naive rolling-window truncation.
 - **Steering.** "Actually, Friday" cancels the running agent, bumps the task's revision and
   re-runs it against the existing calendar event: never a second one.
 - **Independent verification.** Code checks every event (future, sane length, participants
@@ -68,6 +73,6 @@ For real services set `LLM_MODE=gemini`, `GOOGLE_MODE=live` (or `links`), `GITHU
 - Gemini Google Search grounding: answers with sources
 - Google Calendar API, GitHub REST API, Gmail API
 - Linear API via Linear Remote MCP server
-- Condense (planned, see docs/SCOPE.md)
+- Condense (context compression for the meeting agent)
 - Model Context Protocol (MCP) server for Google Antigravity
 - FastAPI, React, Vite

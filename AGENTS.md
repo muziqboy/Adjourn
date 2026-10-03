@@ -132,3 +132,16 @@ Linear integration uses Linear's remote MCP server (`https://mcp.linear.app/mcp`
 - **Gmail**: Enabled with Google sign-in (requires `gmail.compose` scope in `backend/token.json`). Set `GOOGLE_MODE=live` to draft follow-up emails, or `links` for prefilled mailto URLs. Add `email` to `AGENTS`.
 - **Google Search (Grounding)**: Grounded live search used by the `answer` and `research` agents. Enabled automatically when `LLM_MODE=gemini` and `GEMINI_API_KEY` is provided.
 
+## Condense (Context Compression)
+
+Condense (`condense.chat`) sits in front of the meeting agent's long multi-turn session to compress conversation history, keep latency low, and reduce quadratic token costs across long meetings.
+
+1. Get an API key from `condense.chat`.
+2. Set in `.env`:
+   - `CONDENSE_API_KEY=cnd_...`
+   - `CONDENSE_ROLES=intent`
+   - (Optional) `CONDENSE_BASE_URL=https://api.condense.chat/openai/v1`
+3. Ensure `GEMINI_API_KEY` is set (Condense forwards requests upstream to Gemini's OpenAI-compatible endpoint).
+4. Run the smoke test: `cd backend && uv run python scripts/smoke_condense.py`.
+
+
