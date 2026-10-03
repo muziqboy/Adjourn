@@ -14,7 +14,9 @@
   When may it speak? Gemini decides: it hears the real audio (our own transcription garbles
   "Adjourn"). Its instructions say to speak only when addressed or invited, and otherwise to
   call the raise_hand tool, which shows the hand here; lower_hand takes it down. Audio it does
-  produce is always played.
+  produce is played, except replies that talk about themselves ("I was not addressed", "I'll stay
+  silent"): the first moments of each reply wait for its transcript (META below) so those are
+  dropped unheard. Gemini also has a stay_silent tool so declining is an action, not a sentence.
 -->
 <html lang="en">
 <head>
@@ -102,6 +104,32 @@ function setState(state, status, hint) {
   if (hint !== undefined) $("hint").textContent = hint;
 }
 const LISTENING = () => setState("listening", "Listening", "Say “Adjourn, …” to ask me anything");
+
+// ---- dropping replies that narrate the model's own decision --------------------------------
+const META = /(no audio|not (been )?address|did(n't| not) address|remain(ing)? silent|stay(ing)? silent|standing by|i'?m (here|ready)|as an ai|the user (did|has|addressed)|i will (now )?(stay|remain|wait))/i;
+const GATE_MS = 700;  // max wait for the first words of a reply before playing it anyway
+let turnState = null;  // null | "gating" | "play" | "drop"
+let gated = [], gateTimer = null, turnText = "";
+function openGate() {
+  if (turnState !== "gating") return;
+  clearTimeout(gateTimer);
+  turnState = "play";
+  gated.forEach(play); gated = [];
+}
+function onReplyAudio(b64) {
+  if (turnState === null) { turnState = "gating"; gateTimer = setTimeout(openGate, GATE_MS); }
+  if (turnState === "gating") gated.push(b64);
+  else if (turnState === "play") play(b64);
+}
+function onReplyText(text) {
+  turnText += text;
+  if (turnState === "drop") return;
+  if (META.test(turnText)) {
+    log(`dropped a reply about itself: ${turnText.slice(0, 120)}`);
+    clearTimeout(gateTimer); gated = []; turnState = "drop"; stopPlayback(); LISTENING();
+  } else if (turnState === "gating" && turnText.trim().split(/\s+/).length >= 4) openGate();
+}
+function endTurn() { clearTimeout(gateTimer); if (turnState === "gating") openGate(); turnState = null; turnText = ""; }
 
 // ---- the raised hand, driven by Gemini's raise_hand / lower_hand tools ----------------
 const HAND_MS = 90000;  // the hand comes down by itself after this
@@ -207,17 +235,22 @@ async function main() {
         for (const call of m.toolCall?.functionCalls ?? []) {
           if (call.name === "raise_hand") raiseHand(call.args?.point);
           if (call.name === "lower_hand") lowerHand("Gemini lowered it");
+          if (call.name === "stay_silent") log("stayed silent");
           session.sendToolResponse({ functionResponses: [{ id: call.id, name: call.name, response: { result: "ok" } }] });
         }
         const sc = m.serverContent;
         if (!sc) return;
         if (sc.inputTranscription?.text) heard += sc.inputTranscription.text;
-        if (sc.interrupted) { log("interrupted"); stopPlayback(); }
-        for (const part of sc.modelTurn?.parts ?? []) if (part.inlineData?.data) play(part.inlineData.data);
-        if (sc.outputTranscription?.text) { said += sc.outputTranscription.text; $("hint").textContent = said.slice(-160); }
+        if (sc.interrupted) { log("interrupted"); stopPlayback(); endTurn(); }
+        for (const part of sc.modelTurn?.parts ?? []) if (part.inlineData?.data) onReplyAudio(part.inlineData.data);
+        if (sc.outputTranscription?.text) {
+          said += sc.outputTranscription.text;
+          onReplyText(sc.outputTranscription.text);
+          if (turnState !== "drop") $("hint").textContent = said.slice(-160);
+        }
         if (sc.turnComplete) {
-          if (said) log(`heard: ${heard.slice(-160)} | said: ${said}`);
-          said = ""; heard = "";
+          if (said) log(`[${turnState ?? "done"}] heard: ${heard.slice(-160)} | said: ${said}`);
+          endTurn(); said = ""; heard = "";
         }
       },
       onerror: (e) => { log(`live error: ${e.message ?? e}`); setState("error", "Voice error"); },

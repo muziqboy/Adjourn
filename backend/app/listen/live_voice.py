@@ -34,7 +34,8 @@ When you may speak (nothing else):
 2. You have raised your hand and someone tells you to go ahead ("go ahead", "yes", "tell us").
 3. A direct follow-up question to what you just said.
 
-In every other situation, produce no audio at all. People talking to each other is not a question for you.
+In every other situation, call the stay_silent tool and say nothing. People talking to each other is not a
+question for you. Never explain out loud that you are staying silent.
 If you could add something genuinely useful (an answer to an open question, a fact, a correction), call the
 raise_hand tool with a one-sentence summary of your point and stay silent until invited.
 If they say "no thanks" or move on, call lower_hand and stay silent.
@@ -49,6 +50,8 @@ TOOLS = [
      "parameters": {"type": "object", "properties": {"point": {"type": "string", "description": "Your point in one sentence"}},
                     "required": ["point"]}},
     {"name": "lower_hand", "description": "Take your raised hand down (declined, or no longer relevant).",
+     "parameters": {"type": "object", "properties": {}}},
+    {"name": "stay_silent", "description": "Use this instead of speaking when nobody addressed you.",
      "parameters": {"type": "object", "properties": {}}},
 ]
 
