@@ -323,9 +323,9 @@ def test_a_yes_said_too_early_is_kept_and_an_email_said_aloud_is_recorded(orch, 
         store.task_listeners.append(floor.on_task)
         store.put_task(Task(id="t7", type="linear", title="x", brief="x", status="running"))
         floor.apply({"action": "speak", "say": "Will do.", "approve": ["t7"],
-                     "contacts": [{"name": "Chinmay", "email": "chinmaypant21@gmail.com"}]})
+                     "contacts": [{"name": "Chinmay", "email": "rahulmehta21@example.org"}]})
         assert "t7" in floor._pending_yes  # not refused, not lost
-        assert any(p.name == "Chinmay" and p.email == "chinmaypant21@gmail.com" for p in store.meeting.others)
+        assert any(p.name == "Chinmay" and p.email == "rahulmehta21@example.org" for p in store.meeting.others)
         approved = []
 
         async def fake_approve(task_id):
