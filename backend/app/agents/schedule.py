@@ -108,15 +108,33 @@ async def verify(task: Task, art: Artifact, ctx: RunContext) -> list[str]:
     return problems
 
 
+def invitees(task: Task, ctx: RunContext) -> tuple[list[str], list[str]]:
+    """(emails to invite, names without an email). The people the brief names, or everyone else
+    in the call if it names nobody; plus any email written in the brief. Never the organiser."""
+    brief = task.brief.lower()
+    me = ctx.meeting.me.email.lower()
+    named = [p for p in ctx.meeting.others if p.name and p.name.split()[0].lower() in brief]
+    people = named or list(ctx.meeting.others)
+    emails = [p.email for p in people if p.email]
+    emails += [e for e in re.findall(r"[\w.+-]+@[\w-]+\.[\w.]+", task.brief) if e.lower() not in {x.lower() for x in emails}]
+    emails = [e for e in emails if e.lower() != me]
+    missing = [p.name for p in people if not p.email]
+    return emails, missing
+
+
 async def approve(task: Task, ctx: RunContext) -> tuple[Artifact, str]:
-    attendees = [p.email for p in ctx.meeting.others if p.email]  # Meet does not always share emails
+    attendees, missing = invitees(task, ctx)
+    if not attendees:
+        raise RuntimeError("Nobody to invite: no email known for "
+                           + (", ".join(missing) if missing else "anyone in the brief") + ". Ask for their email.")
     lock = ctx.orch.locks.setdefault(task.id, asyncio.Lock())
     async with lock:  # never invite while a revision is still moving the event
         await calendar.invite(ctx.external_id, attendees)
     art = task.artifact.model_copy(update={"attendees": attendees})
     if calendar.mode() == "links":
         return art, "Opened the invite in Google Calendar; save it there to send"
-    return art, f"Invite sent to {', '.join(attendees)}"
+    note = f" (no email for {', '.join(missing)})" if missing else ""
+    return art, f"Invite sent to {', '.join(attendees)}{note}"
 
 
 def _description(task: Task, ctx: RunContext) -> str:

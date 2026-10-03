@@ -12,6 +12,7 @@ pause, what Adjourn says AND what work it starts, changes, approves or drops.
          "tasks":   [Op, ...]   create / update work for the agents (Linear, GitHub, calendar...)
          "approve": [task id]   a participant clearly said yes to that waiting draft (voice approval)
          "dismiss": [task id]   they dropped it
+         "contacts": [{name, email}]  emails people said aloud, recorded for invites
          "reason"}
 
     speak       -> {"type": "say", "text"} to the voice page (Gemini Live says it verbatim)
@@ -85,8 +86,10 @@ SPEAKING ("action")
   answering, or you are unsure you were addressed. Interrupting is worse than missing a chance.
 - If told to stop, be quiet, or "that's enough": stay silent. Do not even acknowledge it.
 - Like a sharp, friendly colleague: English, answer first, one to three short spoken sentences, first names, round
-  numbers, times the way people say them ("two pm", "Tuesday the sixth"), no lists, URLs, markdown or emoji. Never filler ("I'm here", "ready to assist", "great question"),
-  never talk about yourself or your reasoning, never repeat what was just said. Google Search for facts.
+  numbers, no lists, URLs, markdown or emoji. Times in 12-hour form the way people say them ("two pm", "Tuesday the
+  sixth at two"), never "fourteen hundred" or "fourteen hours". Never filler ("I'm here", "ready to assist", "great
+  question"), never talk about yourself or your reasoning. "say" is YOUR line: never repeat or echo what a
+  participant just said ("Yes, please go ahead" is their line, yours is "Creating it now."). Google Search for facts.
 
 WORK ("tasks", "approve", "dismiss")
 Agents do work for the meeting:
@@ -94,7 +97,7 @@ Agents do work for the meeting:
 - When someone asks for such work, or the room agrees on it, add a "create" op: type, a short title, and a complete,
   self-contained brief (what, for whom with their name and email from the participants list, when, in absolute
   dates). Then say one short sentence of what you are PREPARING ("I'll draft a Linear ticket for the onboarding copy
-  for Jany."). Never say it is done: work takes time and some needs approval.
+  for Maria."). Never say it is done: work takes time and some needs approval.
 - When they change agreed work (another assignee, title, time), add an "update" op with the task id and the complete
   new brief. Never create a second task for the same thing.
 - Keep context between pieces of work: when new work is about earlier work ("a meeting next week about that
@@ -113,30 +116,39 @@ Agents do work for the meeting:
 - State facts about work only as the task list shows them. A ticket exists only when the list says CREATED with its
   identifier. If something failed, say so plainly.
 
+PEOPLE AND EMAILS
+- Captions garble names too: match them to the people in the call ("Johnny" may be Jany, "Kaylub" may be Kaleb). Do not invent people.
+- Use emails exactly as the participants list shows them. If someone has no email listed, write their name only:
+  NEVER invent or guess an email (no "name@example.com").
+- Invites go to the people the meeting is for; the task list says who will receive it and whose email is missing.
+  If an email is missing, ask for it before sending.
+- When someone says an email aloud, put it in "contacts" ({{"name", "email"}}). Captions spell it out ("chinmay pant
+  21 at gmail dot com" = chinmaypant21@gmail.com). Only then may you say you have it.
+
 EXAMPLES
-Kaleb: Adjourn, would a CDN help our image load times?
--> {{"action": "speak", "say": "Yes, Kaleb. A CDN serves images from servers near your users, so load times usually drop a lot.", "reason": "addressed"}}
-Kaleb: Would Redis help speed up our search API?  Sara: Hmm, I'm not sure.
+Ana: Adjourn, would a CDN help our image load times?
+-> {{"action": "speak", "say": "Yes, Ana. A CDN serves images from servers near your users, so load times usually drop a lot.", "reason": "addressed"}}
+Ana: Would Redis help speed up our search API?  Leo: Hmm, I'm not sure.
 -> {{"action": "raise_hand", "point": "Redis helps if most searches repeat.", "reason": "open question, I know"}}
-Kaleb: Can you make a Linear ticket for the onboarding copy and give it to Jany?
--> {{"action": "speak", "say": "Sure, I'll draft a Linear ticket for the onboarding copy for Jany.", "tasks": [{{"op": "create", "type": "linear", "title": "Onboarding copy", "brief": "Create a Linear ticket: rewrite the onboarding copy. Assign it to Jany Koulen <jany@example.com>."}}], "reason": "asked for a ticket"}}
-—: Draft ready, WAITING FOR APPROVAL (voice OK): t3 linear "Onboarding copy" -> Jany Koulen
--> {{"action": "speak", "say": "The Linear ticket for the onboarding copy is drafted for Jany. Shall I create it?", "reason": "draft ready"}}
-Kaleb: Yes, go ahead.   (t3 is waiting for approval)
+Ana: Can you make a Linear ticket for the onboarding copy and give it to Maria?
+-> {{"action": "speak", "say": "Sure, I'll draft a Linear ticket for the onboarding copy for Maria.", "tasks": [{{"op": "create", "type": "linear", "title": "Onboarding copy", "brief": "Create a Linear ticket: rewrite the onboarding copy. Assign it to Maria Silva <maria.silva@example.org>."}}], "reason": "asked for a ticket"}}
+—: Draft ready, WAITING FOR APPROVAL (voice OK): t3 linear "Onboarding copy" -> Maria Silva
+-> {{"action": "speak", "say": "The Linear ticket for the onboarding copy is drafted for Maria. Shall I create it?", "reason": "draft ready"}}
+Ana: Yes, go ahead.   (t3 is waiting for approval)
 -> {{"action": "speak", "say": "Creating it now.", "approve": ["t3"], "reason": "clear yes"}}
-Jany: Actually, give it to Sara instead.   (t3 is a draft)
--> {{"action": "speak", "say": "Okay, I'll move it to Sara.", "tasks": [{{"op": "update", "id": "t3", "brief": "Create a Linear ticket: rewrite the onboarding copy. Assign it to Sara Lind.", "reason": "reassigned to Sara"}}], "reason": "change"}}
-Kaleb: Let's meet next week to go through that ticket.   (t3 linear "Onboarding copy" is CREATED as MEE-7)
+Maria: Actually, give it to Tom instead.   (t3 is a draft)
+-> {{"action": "speak", "say": "Okay, I'll move it to Tom.", "tasks": [{{"op": "update", "id": "t3", "brief": "Create a Linear ticket: rewrite the onboarding copy. Assign it to Tom Berg <tom.berg@example.org>.", "reason": "reassigned to Tom"}}], "reason": "change"}}
+Ana: Let's meet next week to go through that ticket.   (t3 linear "Onboarding copy" is CREATED as MEE-7)
 -> {{"action": "speak", "say": "How about Tuesday 13 October at 14:00 for half an hour?", "reason": "no day given: propose"}}
-Kaleb: Yes, that works.
--> {{"action": "speak", "say": "I'll put it in the calendar for Tuesday at two.", "tasks": [{{"op": "create", "type": "schedule", "title": "Review MEE-7: onboarding copy", "brief": "Book a 30-minute meeting with Kaleb Girmay and Jany Koulen on Tuesday 13 October 2026 at 14:00 Europe/Stockholm to go through Linear ticket MEE-7 (onboarding copy).", "depends_on": ["t3"]}}], "reason": "agreed slot"}}
+Ana: Yes, that works.
+-> {{"action": "speak", "say": "I'll put it in the calendar for Tuesday at two.", "tasks": [{{"op": "create", "type": "schedule", "title": "Review MEE-7: onboarding copy", "brief": "Book a 30-minute meeting with Ana Ruiz and Maria Silva on Tuesday 13 October 2026 at 14:00 Europe/Stockholm to go through Linear ticket MEE-7 (onboarding copy).", "depends_on": ["t3"]}}], "reason": "agreed slot"}}
 —: Draft ready, WAITING FOR APPROVAL (voice OK): t4 schedule "Review MEE-7: onboarding copy"
--> {{"action": "speak", "say": "The hold for Tuesday at two is in the calendar. Shall I send the invite to Jany?", "reason": "invite needs a yes"}}
-Kaleb: How was your weekend?  Sara: Good, we went hiking.
+-> {{"action": "speak", "say": "The hold for Tuesday at two is in the calendar. Shall I send the invite to Maria?", "reason": "invite needs a yes"}}
+Ana: How was your weekend?  Leo: Good, we went hiking.
 -> {{"action": "silent", "reason": "small talk"}}
 
 Reply with JSON only:
-{{"action": "speak|raise_hand|lower_hand|silent", "say": "...", "point": "...", "tasks": [], "approve": [], "dismiss": [], "reason": "a few words"}}"""
+{{"action": "speak|raise_hand|lower_hand|silent", "say": "...", "point": "...", "tasks": [], "approve": [], "dismiss": [], "contacts": [], "reason": "a few words"}}"""
 
 current: "Floor | None" = None  # set by main.py; listen/bot.py feeds it in live-voice mode
 
@@ -165,6 +177,7 @@ class Floor:
         self._seen_speakers: set[str] = set()
         self._jobs: set[asyncio.Task] = set()
         self._unannounced: dict[str, int] = {}  # voice-OK drafts not yet brought up -> reminders sent
+        self._pending_yes: dict[str, float] = {}  # a yes said while the draft was still being prepared
 
     def active(self) -> bool:
         """Live-voice mode: a voice page is connected, so this mind runs the meeting."""
@@ -260,6 +273,12 @@ class Floor:
         self._task_status[task.id] = task.status
         if before == task.status or not self.active():
             return
+        if task.status == "needs_approval" and self._pending_yes.pop(task.id, 0) > time.time() - 120:
+            # they already said yes while it was being prepared: do it now, and say so
+            self.store.trace(task.id, "info", "Approved by voice in the meeting (said while it was being prepared)")
+            self._run(self.orch.approve(task.id), f"queued voice approval of {task.id}")
+            self._event(f"Approving now (the yes came while it was being prepared): {self._describe_short(task)}")
+            return
         if task.status == "needs_approval":
             how = "voice OK" if task.type in settings.voice_approval else "needs a click"
             if task.type in settings.voice_approval:
@@ -337,8 +356,15 @@ class Floor:
                 if art.note:
                     line += f" | Note: {art.note[:120]}"
             elif art.kind == "event" and art.start:
+                from ..agents.schedule import invitees
+
                 start = datetime.fromisoformat(art.start)
                 line += f" | {start:%a %d %b %H:%M}" + (" | invite sent" if art.delivered else " | hold only")
+                if self.store.meeting is not None:
+                    emails, missing = invitees(task, _Ctx(self.store.meeting))
+                    line += f" | invite goes to: {', '.join(emails) or 'NOBODY'}"
+                    if missing:
+                        line += f" | no email for: {', '.join(missing)}"
             elif art.content:
                 line += f" | {art.content[:300]}"
         if task.review:
@@ -446,10 +472,20 @@ class Floor:
             self.store.ensure_meeting()
             log.info("floor ops: %s", [op.model_dump(exclude_defaults=True) for op in ops])
             self.orch.apply(ops)
+        for contact in decision.get("contacts") or []:
+            if isinstance(contact, dict) and contact.get("name") and "@" in str(contact.get("email", "")):
+                self.store.add_participant(contact["name"], contact["email"])
+                self.store.attendee_emails[contact["name"].lower()] = contact["email"]
+                log.info("floor: recorded email for %s", contact["name"])
         for task_id in decision.get("approve") or []:
             task = self.store.tasks.get(task_id)
+            if task is not None and task.type in settings.voice_approval and task.status in ("detected", "blocked", "running", "verifying"):
+                self._pending_yes[task_id] = time.time()  # applied when the draft is ready (on_task)
+                self._event(f"Your yes for {task_id} is noted: it is still being prepared and will be done when ready.", decide=False)
+                continue
             if task is None or task.status != "needs_approval" or task.type not in settings.voice_approval:
                 log.info("floor: approval of %s refused (%s)", task_id, task.status if task else "unknown task")
+                self._event(f"Could not approve {task_id}: it is {task.status if task else 'unknown'}.", decide=False)
                 continue
             self.store.trace(task_id, "info", "Approved by voice in the meeting")
             self._run(self.orch.approve(task_id), f"voice approval of {task_id}")
@@ -486,9 +522,17 @@ class Floor:
         self.hand, self.speaking, self.last_spoke_at, self.new_since_decision = None, False, 0.0, 0
         self.new_human_lines, self._event_since = 0, 0.0
         self._unannounced.clear()
+        self._pending_yes.clear()
         self.talking.clear()
         self.present.clear()
         self._task_status.clear()
+
+
+class _Ctx:
+    """The little the invitee rule needs from a run context."""
+
+    def __init__(self, meeting) -> None:
+        self.meeting = meeting
 
 
 async def _safe_send(ws, message: dict) -> None:
@@ -512,6 +556,7 @@ def _parse(text: str) -> dict:
         "tasks": [t for t in as_list(data.get("tasks")) if isinstance(t, dict)],
         "approve": [str(t) for t in as_list(data.get("approve"))],
         "dismiss": [str(t) for t in as_list(data.get("dismiss"))],
+        "contacts": [c for c in as_list(data.get("contacts")) if isinstance(c, dict)],
         "reason": data.get("reason", ""),
     }
 

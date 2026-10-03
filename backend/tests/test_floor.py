@@ -283,3 +283,59 @@ def test_a_cough_does_not_stop_it(orch, monkeypatch):
         assert floor.speaking and "stop" not in kinds(page)
 
     run(body())
+
+
+def test_invites_go_to_the_people_named_and_never_to_nobody(orch):
+    from app.agents import schedule
+    from app.core.contract import MeetingContext, Person, Task
+
+    store.meeting = MeetingContext(me=Person(name="Kaleb Girmay", email="kaleb@x.se"),
+                                   others=[Person(name="Jany Koulen", email="jany@x.se"), Person(name="Star Developer", email="")])
+
+    class Ctx:
+        meeting = store.meeting
+
+    task = Task(id="t1", type="schedule", title="x", brief="Meet Jany Koulen on Tuesday at two.")
+    assert schedule.invitees(task, Ctx) == (["jany@x.se"], [])
+    task.brief = "Meet with everyone, and chinmay@x.se, on Tuesday."
+    assert schedule.invitees(task, Ctx) == (["jany@x.se", "chinmay@x.se"], ["Star Developer"])
+    task.brief = "Meet Star Developer on Tuesday."
+    assert schedule.invitees(task, Ctx) == ([], ["Star Developer"])
+
+    async def body():
+        task.artifact = __import__("app.core.contract", fromlist=["Artifact"]).Artifact(kind="event", external_id="e1")
+        try:
+            await schedule.approve(task, Ctx)
+            raise AssertionError("an invite to nobody must fail")
+        except RuntimeError as exc:
+            assert "Nobody to invite" in str(exc) and "Star Developer" in str(exc)
+
+    run(body())
+
+
+def test_a_yes_said_too_early_is_kept_and_an_email_said_aloud_is_recorded(orch, monkeypatch):
+    from app.core.config import settings
+    from app.core.contract import Task
+
+    async def body():
+        floor, page = make_floor()
+        floor.orch = orch
+        store.task_listeners.append(floor.on_task)
+        store.put_task(Task(id="t7", type="linear", title="x", brief="x", status="running"))
+        floor.apply({"action": "speak", "say": "Will do.", "approve": ["t7"],
+                     "contacts": [{"name": "Chinmay", "email": "chinmaypant21@gmail.com"}]})
+        assert "t7" in floor._pending_yes  # not refused, not lost
+        assert any(p.name == "Chinmay" and p.email == "chinmaypant21@gmail.com" for p in store.meeting.others)
+        approved = []
+
+        async def fake_approve(task_id):
+            approved.append(task_id)
+
+        monkeypatch.setattr(orch, "approve", fake_approve)
+        task = store.tasks["t7"]
+        task.status = "needs_approval"
+        store.put_task(task)  # the draft becomes ready
+        await until(lambda: approved == ["t7"])
+        store.task_listeners.clear()
+
+    run(body())

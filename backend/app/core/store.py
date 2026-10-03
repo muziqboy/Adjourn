@@ -120,9 +120,9 @@ class Store:
         return self.meeting
 
     def add_participant(self, name: str | None, email: str | None = None, is_host: bool = False) -> None:
-        """Someone the bot saw in the call (join event or caption)."""
-        if not name:
-            return
+        """Someone the bot saw in the call (join event or caption), or whose email was said aloud."""
+        if not name or name.strip().lower() in ("unknown", "someone", "—"):
+            return  # captions without a speaker name are not a person
         meeting = self.ensure_meeting()
         email = email or self.attendee_emails.get(name.lower(), "")
         me = meeting.me
